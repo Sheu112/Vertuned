@@ -292,9 +292,13 @@ class DiscordPresence(
     }
 
     private suspend fun activity(track: Track, start: Long, token: String): JSONObject {
+        // The member list shows the activity name ("Listening to <name>"), so use the artist
+        // there instead of the app name. status_display_type 1 asks Discord to show the
+        // state line (also the artist) in the compact status, like Spotify does.
         val activity = JSONObject()
-            .put("name", APP_NAME)
+            .put("name", (track.artist?.takeIf { it.isNotBlank() } ?: APP_NAME).forDiscord())
             .put("type", ACTIVITY_TYPE_LISTENING)
+            .put("status_display_type", STATUS_DISPLAY_TYPE_STATE)
             .put("details", track.title.forDiscord())
             .put("state", (track.artist ?: APP_NAME).forDiscord())
             .put(
@@ -371,7 +375,8 @@ class DiscordPresence(
         val status: StateFlow<Status> = mutableStatus.asStateFlow()
 
         private const val TAG = "DiscordPresence"
-        private const val APP_NAME = "ViTune"
+        private const val APP_NAME = "Vertune"
+        private const val STATUS_DISPLAY_TYPE_STATE = 1
         private const val GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
 
         private const val OP_DISPATCH = 0
