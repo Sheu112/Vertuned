@@ -1,6 +1,7 @@
 package app.vitune.android.ui.screens.builtinplaylist
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -41,6 +43,9 @@ import app.vitune.android.utils.asMediaItem
 import app.vitune.android.utils.enqueue
 import app.vitune.android.utils.forcePlayAtIndex
 import app.vitune.android.utils.forcePlayFromBeginning
+import app.vitune.android.utils.formatListeningTime
+import app.vitune.android.utils.medium
+import app.vitune.android.utils.secondary
 import app.vitune.android.utils.playingSong
 import app.vitune.compose.persist.persistList
 import app.vitune.core.data.enums.BuiltInPlaylist
@@ -56,6 +61,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
@@ -63,11 +69,14 @@ fun BuiltInPlaylistSongs(
     builtInPlaylist: BuiltInPlaylist,
     modifier: Modifier = Modifier
 ) = with(DataPreferences) {
-    val (colorPalette) = LocalAppearance.current
+    val (colorPalette, typography) = LocalAppearance.current
     val binder = LocalPlayerServiceBinder.current
     val menuState = LocalMenuState.current
 
     var songs by persistList<Song>("${builtInPlaylist.name}/songs")
+
+    // Listening time per song id, only filled for the "My top" playlist
+    var playTimes by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
 
     var sortBy by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(SongSortBy.DateAdded) }
     var sortOrder by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(SortOrder.Descending) }
@@ -97,13 +106,20 @@ fun BuiltInPlaylistSongs(
                     .songsByPlayTimeDesc(limit = length)
                     .distinctUntilChanged()
                     .cancellable()
+                    .onEach { list ->
+                        playTimes = list.associate { it.id to it.totalPlayTimeMs }
+                    }
                 else Database
-                    .trending(
+                    .trendingWithPlayTime(
                         limit = length,
                         period = period.duration.inWholeMilliseconds
                     )
                     .distinctUntilChanged()
                     .cancellable()
+                    .onEach { list ->
+                        playTimes = list.associate { it.song.id to it.playTimeMs }
+                    }
+                    .map { list -> list.map { it.song } }
             }
 
             BuiltInPlaylist.History -> Database.history()
@@ -192,6 +208,10 @@ fun BuiltInPlaylistSongs(
                 key = { _, song -> song.id },
                 contentType = { _, song -> song }
             ) { index, song ->
+                val listeningTime = if (builtInPlaylist == BuiltInPlaylist.Top)
+                    playTimes[song.id]?.let(::formatListeningTime)
+                else null
+
                 SongItem(
                     modifier = Modifier
                         .combinedClickable(
@@ -223,6 +243,15 @@ fun BuiltInPlaylistSongs(
                         .animateItem(),
                     song = song,
                     index = if (builtInPlaylist == BuiltInPlaylist.Top) index else null,
+                    trailingContent = listeningTime?.let { text ->
+                        @Composable {
+                            BasicText(
+                                text = text,
+                                style = typography.xxs.secondary.medium,
+                                maxLines = 1
+                            )
+                        }
+                    },
                     thumbnailSize = Dimensions.thumbnails.song,
                     isPlaying = playing && currentMediaId == song.id
                 )
