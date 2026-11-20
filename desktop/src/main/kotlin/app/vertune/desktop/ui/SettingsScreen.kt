@@ -163,7 +163,7 @@ private fun Switch(isChecked: Boolean) {
 }
 
 @Composable
-private fun SwitchSettingsEntry(title: String, text: String?, isChecked: Boolean, onCheckedChange: (Boolean) -> Unit, isEnabled: Boolean = true) =
+private fun SwitchSettingsEntry(title: String, text: String?, isChecked: Boolean, isEnabled: Boolean = true, onCheckedChange: (Boolean) -> Unit) =
     SettingsEntry(title, { onCheckedChange(!isChecked) }, text, isEnabled) { Switch(isChecked) }
 
 @Composable
