@@ -59,6 +59,7 @@ import app.vitune.android.models.SongAlbumMap
 import app.vitune.android.models.SongArtistMap
 import app.vitune.android.models.SongPlaylistMap
 import app.vitune.android.models.SongWithContentLength
+import app.vitune.android.models.SongWithPlayTime
 import app.vitune.android.models.SortedSongPlaylistMap
 import app.vitune.android.service.LOCAL_KEY_PREFIX
 import app.vitune.core.data.enums.AlbumSortBy
@@ -680,6 +681,25 @@ interface DatabaseAccessor {
         now: Long = System.currentTimeMillis(),
         period: Long
     ): Flow<List<Song>>
+
+    @Transaction
+    @Query(
+        """
+        SELECT Song.*, SUM(playTime) AS playTimeMs FROM Event
+        JOIN Song ON Song.id = songId
+        WHERE (:now - Event.timestamp) <= :period AND
+        Song.id NOT LIKE '$LOCAL_KEY_PREFIX%'
+        GROUP BY songId
+        ORDER BY SUM(playTime) DESC
+        LIMIT :limit
+        """
+    )
+    @RewriteQueriesToDropUnusedColumns
+    fun trendingWithPlayTime(
+        limit: Int = 3,
+        now: Long = System.currentTimeMillis(),
+        period: Long
+    ): Flow<List<SongWithPlayTime>>
 
     @Transaction
     @Query("SELECT * FROM Event ORDER BY timestamp DESC")

@@ -162,6 +162,18 @@ fun Uri.thumbnail(size: Int) = toString().thumbnail(size).toUri()
 
 fun formatAsDuration(millis: Long) = DateUtils.formatElapsedTime(millis / 1000).removePrefix("0")
 
+/** Friendly listening time, e.g. "3h 12m", "12m", "45s". */
+fun formatListeningTime(millis: Long): String {
+    val totalSeconds = (millis / 1000).coerceAtLeast(0)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    return when {
+        hours > 0 -> "${hours}h ${minutes}m"
+        minutes > 0 -> "${minutes}m"
+        else -> "${totalSeconds}s"
+    }
+}
+
 @Suppress("LoopWithTooManyJumpStatements")
 suspend fun Result<Innertube.PlaylistOrAlbumPage>.completed(
     maxDepth: Int = Int.MAX_VALUE,

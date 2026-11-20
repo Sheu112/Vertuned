@@ -292,9 +292,13 @@ class DiscordPresence(
     }
 
     private suspend fun activity(track: Track, start: Long, token: String): JSONObject {
+        // The card header reads "Listening to <name>", so name stays the app name.
+        // status_display_type 1 makes the compact member-list status show the state
+        // line (the artist) instead of the name, like Spotify does.
         val activity = JSONObject()
             .put("name", APP_NAME)
             .put("type", ACTIVITY_TYPE_LISTENING)
+            .put("status_display_type", STATUS_DISPLAY_TYPE_STATE)
             .put("details", track.title.forDiscord())
             .put("state", (track.artist ?: APP_NAME).forDiscord())
             .put(
@@ -372,6 +376,7 @@ class DiscordPresence(
 
         private const val TAG = "DiscordPresence"
         private const val APP_NAME = "ViTune"
+        private const val STATUS_DISPLAY_TYPE_STATE = 1
         private const val GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json"
 
         private const val OP_DISPATCH = 0
