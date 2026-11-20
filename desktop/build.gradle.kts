@@ -30,6 +30,7 @@ dependencies {
     implementation(libs.coil.ktor)
 
     implementation("org.xerial:sqlite-jdbc:3.54.1.0")
+    implementation("com.google.zxing:core:3.5.3")
     implementation("org.json:json:20260814")
     implementation("org.slf4j:slf4j-nop:2.0.20")
 }

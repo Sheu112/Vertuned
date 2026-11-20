@@ -47,6 +47,7 @@ import app.vertune.desktop.Paths
 import app.vertune.desktop.data.Library
 import app.vertune.desktop.data.Settings
 import app.vertune.desktop.discord.DiscordPresence
+import app.vertune.desktop.discord.DiscordQrLogin
 import app.vertune.desktop.player.PlayerController
 import app.vertune.desktop.player.SongCache
 import app.vertune.desktop.player.StreamResolver
@@ -66,6 +67,7 @@ enum class SettingsTab(val key: String, val fallback: String, val icon: String) 
     Player("player", "Player", "play"),
     Cache("cache", "Cache", "server"),
     Database("database", "Database", "server"),
+    Sync("sync", "Sync", "sync"),
     Other("other", "Other", "shapes"),
     About("about", "About", "information")
 }
@@ -77,6 +79,7 @@ fun SettingsScreen(tab: SettingsTab) {
         SettingsTab.Player -> PlayerSettings()
         SettingsTab.Cache -> CacheSettings()
         SettingsTab.Database -> DatabaseSettings()
+        SettingsTab.Sync -> SettingsCategoryScreen(str("sync", "Sync")) { DiscordSettingsGroup() }
         SettingsTab.Other -> OtherSettings()
         SettingsTab.About -> AboutSettings()
     }
@@ -453,8 +456,6 @@ private fun PlayerSettings() = SettingsCategoryScreen(str("player", "Player")) {
         })
     }
 
-    DiscordSettingsGroup()
-
     var importResult by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     SettingsGroup(
@@ -490,6 +491,9 @@ private fun DiscordSettingsGroup() = SettingsGroup(
     var editingToken by remember { mutableStateOf(false) }
     var editingAppId by remember { mutableStateOf(false) }
 
+    var loggingIn by remember { mutableStateOf(false) }
+    if (loggingIn) DiscordLoginDialog { loggingIn = false }
+
     if (editingToken) TextFieldDialog("", str("discord_token", "Discord token"), token, { editingToken = false }) {
         Settings.discordToken.value = it.trim()
     }
@@ -513,6 +517,10 @@ private fun DiscordSettingsGroup() = SettingsGroup(
         }
     )
     SettingsEntry(
+        str("discord_login", "Log in with Discord"), { loggingIn = true },
+        "Scan a code with the Discord app on your phone and the token is filled in for you"
+    )
+    SettingsEntry(
         str("discord_token", "Discord token"), { editingToken = true },
         if (token.isBlank()) str("discord_token_not_set", "Not set") else str("discord_token_set", "Set")
     )
@@ -520,6 +528,86 @@ private fun DiscordSettingsGroup() = SettingsGroup(
         str("discord_application_id", "Application ID"), { editingAppId = true },
         appId.ifBlank { str("discord_application_id_description", "Optional, needed to show album art") }
     )
+}
+
+/**
+ * Discord's QR code login: scan the code with the Discord app on your phone, confirm, and the
+ * token is saved and Rich Presence switched on.
+ */
+@Composable
+private fun DiscordLoginDialog(onDismiss: () -> Unit) {
+    val palette = LocalPalette.current
+    var step by remember { mutableStateOf<DiscordQrLogin.Step>(DiscordQrLogin.Step.Connecting) }
+    var attempt by remember { mutableIntStateOf(0) }
+    LaunchedEffect(attempt) {
+        DiscordQrLogin.run { s ->
+            step = s
+            if (s is DiscordQrLogin.Step.Done) {
+                Settings.discordToken.value = s.token
+                Settings.discordEnabled.value = true
+            }
+        }
+    }
+    DialogFrame(onDismiss) {
+        BasicText(
+            str("discord_login", "Log in with Discord"),
+            style = Type.s.semiBold.color(palette.text).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
+            when (val s = step) {
+                DiscordQrLogin.Step.Connecting -> Loading()
+                is DiscordQrLogin.Step.ShowCode -> QrCode(s.url)
+                is DiscordQrLogin.Step.Scanned -> AppIcon("information", palette.accent, size = 64.dp)
+                is DiscordQrLogin.Step.Done -> AppIcon("heart", palette.accent, size = 64.dp)
+                is DiscordQrLogin.Step.Failed -> AppIcon("alert_circle", palette.red, size = 64.dp)
+            }
+        }
+        BasicText(
+            when (val s = step) {
+                DiscordQrLogin.Step.Connecting -> "Getting a code from Discord…"
+                is DiscordQrLogin.Step.ShowCode ->
+                    "Open Discord on your phone, go to Settings → Scan QR Code, and point the camera at this code."
+                is DiscordQrLogin.Step.Scanned ->
+                    "Hi ${s.username}! Tap Log in on your phone to finish."
+                is DiscordQrLogin.Step.Done -> str("discord_login_success", "Logged in to Discord")
+                is DiscordQrLogin.Step.Failed -> s.reason
+            },
+            style = Type.xs.medium.color(palette.textSecondary).copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+            when (step) {
+                is DiscordQrLogin.Step.Done -> DialogTextButton(str("done", "Done"), onDismiss, primary = true)
+                is DiscordQrLogin.Step.Failed -> {
+                    DialogTextButton(str("cancel", "Cancel"), onDismiss)
+                    DialogTextButton("Try again", { step = DiscordQrLogin.Step.Connecting; attempt++ }, primary = true)
+                }
+                else -> DialogTextButton(str("cancel", "Cancel"), onDismiss)
+            }
+        }
+    }
+}
+
+/** Draws [text] as a QR code: dark squares on a white card, so phone cameras read it easily. */
+@Composable
+private fun QrCode(text: String) {
+    val matrix = remember(text) {
+        com.google.zxing.qrcode.QRCodeWriter().encode(
+            text, com.google.zxing.BarcodeFormat.QR_CODE, 0, 0,
+            mapOf(com.google.zxing.EncodeHintType.MARGIN to 2)
+        )
+    }
+    Canvas(Modifier.size(220.dp).clip(RoundedCornerShape(12.dp)).background(androidx.compose.ui.graphics.Color.White)) {
+        val cell = size.width / matrix.width
+        for (y in 0 until matrix.height) for (x in 0 until matrix.width) {
+            if (matrix.get(x, y)) drawRect(
+                androidx.compose.ui.graphics.Color.Black,
+                topLeft = androidx.compose.ui.geometry.Offset(x * cell, y * cell),
+                size = androidx.compose.ui.geometry.Size(cell + 0.5f, cell + 0.5f)
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------- Cache
