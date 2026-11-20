@@ -45,6 +45,25 @@ object Library {
                     )
                     """.trimIndent()
                 )
+                st.executeUpdate(
+                    """
+                    CREATE TABLE IF NOT EXISTS Playlist (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                st.executeUpdate(
+                    """
+                    CREATE TABLE IF NOT EXISTS SongPlaylistMap (
+                        songId TEXT NOT NULL,
+                        playlistId INTEGER NOT NULL,
+                        position INTEGER NOT NULL,
+                        PRIMARY KEY (songId, playlistId)
+                    )
+                    """.trimIndent()
+                )
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS Event_songId ON Event(songId)")
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS Event_timestamp ON Event(timestamp)")
             }
@@ -170,6 +189,137 @@ object Library {
             st.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else 0L }
         }
 
+    // ---- Playlists (like the phone app's local playlists)
+
+    data class PlaylistPreview(val id: Long, val name: String, val songCount: Int, val thumbnails: List<String>)
+
+    enum class PlaylistSort { Name, SongCount, DateAdded }
+
+    @Synchronized
+    fun playlists(sort: PlaylistSort = PlaylistSort.DateAdded, descending: Boolean = true): List<PlaylistPreview> {
+        val order = when (sort) {
+            PlaylistSort.Name -> "p.name COLLATE NOCASE"
+            PlaylistSort.SongCount -> "songCount"
+            PlaylistSort.DateAdded -> "p.createdAt"
+        } + if (descending) " DESC" else " ASC"
+        val rows = connection.createStatement().use { st ->
+            st.executeQuery(
+                "SELECT p.id, p.name, (SELECT COUNT(*) FROM SongPlaylistMap m WHERE m.playlistId = p.id) AS songCount " +
+                    "FROM Playlist p ORDER BY $order"
+            ).use { rs -> buildList { while (rs.next()) add(Triple(rs.getLong(1), rs.getString(2), rs.getInt(3))) } }
+        }
+        return rows.map { (id, name, count) ->
+            val thumbs = connection.prepareStatement(
+                "SELECT s.thumbnail FROM SongPlaylistMap m JOIN Song s ON s.id = m.songId " +
+                    "WHERE m.playlistId = ? AND s.thumbnail IS NOT NULL ORDER BY m.position LIMIT 4"
+            ).use { st ->
+                st.setLong(1, id)
+                st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.getString(1)) } }
+            }
+            PlaylistPreview(id, name, count, thumbs)
+        }
+    }
+
+    @Synchronized
+    fun playlistName(id: Long): String? =
+        connection.prepareStatement("SELECT name FROM Playlist WHERE id = ?").use { st ->
+            st.setLong(1, id)
+            st.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+        }
+
+    @Synchronized
+    fun playlistSongs(id: Long): List<Track> = connection.prepareStatement(
+        "SELECT Song.* FROM SongPlaylistMap m JOIN Song ON Song.id = m.songId WHERE m.playlistId = ? ORDER BY m.position"
+    ).use { st ->
+        st.setLong(1, id)
+        st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.toTrack()) } }
+    }
+
+    @Synchronized
+    fun createPlaylist(name: String): Long {
+        connection.prepareStatement("INSERT INTO Playlist (name, createdAt) VALUES (?, ?)").use { st ->
+            st.setString(1, name)
+            st.setLong(2, System.currentTimeMillis())
+            st.executeUpdate()
+        }
+        val id = connection.createStatement().use { it.executeQuery("SELECT last_insert_rowid()").use { rs -> rs.next(); rs.getLong(1) } }
+        changed()
+        return id
+    }
+
+    @Synchronized
+    fun renamePlaylist(id: Long, name: String) {
+        connection.prepareStatement("UPDATE Playlist SET name = ? WHERE id = ?").use { st ->
+            st.setString(1, name)
+            st.setLong(2, id)
+            st.executeUpdate()
+        }
+        changed()
+    }
+
+    @Synchronized
+    fun deletePlaylist(id: Long) {
+        connection.prepareStatement("DELETE FROM SongPlaylistMap WHERE playlistId = ?").use { it.setLong(1, id); it.executeUpdate() }
+        connection.prepareStatement("DELETE FROM Playlist WHERE id = ?").use { it.setLong(1, id); it.executeUpdate() }
+        changed()
+    }
+
+    @Synchronized
+    fun addToPlaylist(id: Long, track: Track) {
+        save(track)
+        connection.prepareStatement(
+            "INSERT OR IGNORE INTO SongPlaylistMap (songId, playlistId, position) " +
+                "VALUES (?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM SongPlaylistMap WHERE playlistId = ?))"
+        ).use { st ->
+            st.setString(1, track.id)
+            st.setLong(2, id)
+            st.setLong(3, id)
+            st.executeUpdate()
+        }
+        changed()
+    }
+
+    @Synchronized
+    fun removeFromPlaylist(id: Long, songId: String) {
+        connection.prepareStatement("DELETE FROM SongPlaylistMap WHERE playlistId = ? AND songId = ?").use { st ->
+            st.setLong(1, id)
+            st.setString(2, songId)
+            st.executeUpdate()
+        }
+        changed()
+    }
+
+    /** Moves the song at [from] to [to] (positions in the playlist's order). */
+    @Synchronized
+    fun movePlaylistSong(id: Long, from: Int, to: Int) {
+        val songs = playlistSongs(id).map { it.id }.toMutableList()
+        if (from !in songs.indices || to !in songs.indices) return
+        songs.add(to, songs.removeAt(from))
+        connection.prepareStatement("UPDATE SongPlaylistMap SET position = ? WHERE playlistId = ? AND songId = ?").use { st ->
+            songs.forEachIndexed { i, songId ->
+                st.setInt(1, i)
+                st.setLong(2, id)
+                st.setString(3, songId)
+                st.addBatch()
+            }
+            st.executeBatch()
+        }
+        changed()
+    }
+
+    /** Every song in the library (played, liked or in a playlist), like the phone's Songs tab. */
+    @Synchronized
+    fun songs(): List<Track> = query(
+        """
+        SELECT Song.* FROM Song LEFT JOIN (
+            SELECT songId, SUM(playTime) AS total FROM Event GROUP BY songId
+        ) e ON e.songId = Song.id
+        WHERE e.total IS NOT NULL OR Song.likedAt IS NOT NULL
+            OR Song.id IN (SELECT songId FROM SongPlaylistMap)
+        ORDER BY Song.rowid DESC
+        """.trimIndent()
+    )
+
     @Synchronized
     fun albumTitle(songId: String): String? =
         connection.prepareStatement("SELECT album FROM Song WHERE id = ?").use { st ->
@@ -216,6 +366,31 @@ object Library {
                     )
                     """.trimIndent()
                 )
+                val hasPlaylists = st.executeQuery(
+                    "SELECT COUNT(*) FROM phone.sqlite_master WHERE name IN ('Playlist', 'SongPlaylistMap')"
+                ).use { it.next() && it.getInt(1) == 2 }
+                if (hasPlaylists) {
+                    val phonePlaylists = st.executeQuery(
+                        "SELECT id, name FROM phone.Playlist WHERE browseId IS NULL OR browseId = ''"
+                    ).use { rs -> buildList { while (rs.next()) add(rs.getLong(1) to rs.getString(2)) } }
+                    val existing = connection.createStatement().use { s2 ->
+                        s2.executeQuery("SELECT name FROM Playlist").use { rs -> buildSet { while (rs.next()) add(rs.getString(1)) } }
+                    }
+                    for ((phoneId, name) in phonePlaylists) {
+                        if (name in existing) continue
+                        connection.prepareStatement("INSERT INTO Playlist (name, createdAt) VALUES (?, ?)").use { ps ->
+                            ps.setString(1, name)
+                            ps.setLong(2, System.currentTimeMillis())
+                            ps.executeUpdate()
+                        }
+                        val newId = st.executeQuery("SELECT last_insert_rowid()").use { it.next(); it.getLong(1) }
+                        st.executeUpdate(
+                            "INSERT OR IGNORE INTO SongPlaylistMap (songId, playlistId, position) " +
+                                "SELECT m.songId, $newId, m.position FROM phone.SongPlaylistMap m " +
+                                "WHERE m.playlistId = $phoneId AND m.songId IN (SELECT id FROM Song)"
+                        )
+                    }
+                }
                 return songs to events
             } finally {
                 st.executeUpdate("DETACH DATABASE phone")

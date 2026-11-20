@@ -60,12 +60,19 @@ jobs:
         run: |
           dir=desktop/resources/macos-arm64
           mkdir -p "$dir"
-          curl -fsSL -o "$dir/yt-dlp" https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos
+          # The folder version of yt-dlp starts much faster than the single-file one, which unpacks itself every time.
+          curl -fsSL -o ytdlp.zip https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos.zip
+          mkdir ytdlp && unzip -q ytdlp.zip -d ytdlp && rm ytdlp.zip
+          exe=$(find ytdlp -name yt-dlp_macos -type f | head -1)
+          mv "$(dirname "$exe")" "$dir/yt-dlp_macos"
+          chmod +x "$dir/yt-dlp_macos/yt-dlp_macos"
           curl -fsSL https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64.gz | gunzip > "$dir/ffmpeg"
           curl -fsSL -o "$dir/qjs" https://github.com/quickjs-ng/quickjs/releases/latest/download/qjs-darwin-arm64
-          chmod +x "$dir"/*
-          for f in "$dir"/*; do codesign --force --sign - "$f"; done
-          "$dir/yt-dlp" --version
+          chmod +x "$dir/ffmpeg" "$dir/qjs"
+          codesign --force --sign - "$dir/ffmpeg"
+          codesign --force --sign - "$dir/qjs"
+          ls -la "$dir" "$dir/yt-dlp_macos" | head -20
+          "$dir/yt-dlp_macos/yt-dlp_macos" --version
           "$dir/ffmpeg" -version | head -1
 
       # Only the desktop project and what it uses get configured, so the Android setup isn't needed here.
