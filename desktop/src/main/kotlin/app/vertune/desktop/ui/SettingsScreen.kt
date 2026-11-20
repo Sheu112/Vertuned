@@ -38,6 +38,7 @@ import app.vertune.desktop.Paths
 import app.vertune.desktop.data.Library
 import app.vertune.desktop.data.Settings
 import app.vertune.desktop.discord.DiscordPresence
+import app.vertune.desktop.player.SongCache
 import app.vertune.desktop.player.StreamResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -93,6 +94,20 @@ private fun Toggle(checked: Boolean, onChange: (Boolean) -> Unit) {
     ) {
         Box(Modifier.size(16.dp).clip(CircleShape).background(palette.text))
     }
+}
+
+@Composable
+private fun Choice(text: String, selected: Boolean, onClick: () -> Unit) {
+    val palette = LocalPalette.current
+    BasicText(
+        text,
+        style = Type.xxs.medium.color(if (selected) palette.onAccent else palette.text),
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) palette.accent else palette.surface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    )
 }
 
 @Composable
@@ -175,6 +190,38 @@ fun SettingsScreen() {
                 })
             }
             importResult?.let { Hint(it) }
+        }
+
+        Group("CACHE") {
+            val limit by Settings.songCacheMb.flow.collectAsState()
+            val paused by Settings.pauseSongCache.flow.collectAsState()
+            val used by SongCache.bytes.collectAsState()
+            val count by SongCache.ids.collectAsState()
+            Item(
+                "Song cache",
+                "Songs are saved as you play them, so they start instantly and play offline. When the cache is full, " +
+                    "the songs you haven't played for the longest time are removed. " +
+                    "Using ${formatBytes(used)} for ${count.size} songs."
+            )
+            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SongCache.sizeChoicesMb.forEach { mb ->
+                    val label = when {
+                        mb == 0L -> "Unlimited"
+                        mb >= 1024 -> "${mb / 1024} GB"
+                        else -> "$mb MB"
+                    }
+                    Choice(label, limit == mb) {
+                        Settings.songCacheMb.value = mb
+                        scope.launch(Dispatchers.IO) { SongCache.evict() }
+                    }
+                }
+            }
+            Item("Pause song cache", "Stops new songs being saved for now.") {
+                Toggle(paused) { Settings.pauseSongCache.value = it }
+            }
+            Row(Modifier.padding(horizontal = 16.dp)) {
+                SecondaryTextButton("Clear song cache", { scope.launch(Dispatchers.IO) { SongCache.clear() } }, enabled = count.isNotEmpty())
+            }
         }
 
         Group("PLAYBACK") {

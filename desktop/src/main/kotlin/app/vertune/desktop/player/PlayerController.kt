@@ -213,8 +213,14 @@ object PlayerController {
             var attempts = 0
             while (isActive) {
                 mutableIsLoading.value = true
-                val stream = try {
-                    StreamResolver.resolve(track.id)
+                // A song saved in the cache plays from disk: it starts at once and needs no internet.
+                val local = SongCache.cached(track.id)
+                val stream = if (local != null) StreamResolver.Stream(
+                    url = local.absolutePath,
+                    durationMs = track.durationMs.takeIf { it > 0 },
+                    headers = emptyMap()
+                ) else try {
+                    StreamResolver.resolve(track.id).also { SongCache.save(track, it) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -272,6 +278,8 @@ object PlayerController {
                             return@launch
                         }
                         // Links can expire, so get a fresh one and continue where it stopped.
+                        // A saved copy that doesn't play is damaged, so it's removed.
+                        if (local != null) SongCache.remove(track.id)
                         StreamResolver.invalidate(track.id)
                         position = s.positionMs
                         delay(RETRY_DELAY_MS)

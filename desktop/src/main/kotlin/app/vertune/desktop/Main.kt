@@ -88,6 +88,7 @@ fun main() {
                 // Space plays/pauses (text fields get the key first, so typing still works).
                 when {
                     event.type != KeyEventType.KeyDown -> false
+                    event.key == Key.Escape && nav.showPlayer -> { nav.showPlayer = false; true }
                     event.key == Key.Spacebar -> PlayerController.togglePlay().let { true }
                     event.isMetaPressed && event.key == Key.DirectionRight -> PlayerController.next().let { true }
                     event.isMetaPressed && event.key == Key.DirectionLeft -> PlayerController.previous().let { true }

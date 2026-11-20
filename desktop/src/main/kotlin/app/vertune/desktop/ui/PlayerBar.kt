@@ -81,9 +81,8 @@ fun PlayerBar(nav: Navigator) {
             height = 3.dp,
             modifier = Modifier.fillMaxWidth()
         )
-        Box(Modifier.fillMaxWidth().height(BAR_HEIGHT)) {
-            // The phone fills the played part of the collapsed player with background2.
-            Box(Modifier.fillMaxHeight().fillMaxWidth(progress).background(palette.background2.copy(alpha = 0.6f)))
+        // Clicking the bar opens the full player, like tapping the phone's mini player.
+        Box(Modifier.fillMaxWidth().height(BAR_HEIGHT).clickable { nav.showPlayer = true }) {
 
             // Now playing
             Row(
@@ -97,15 +96,13 @@ fun PlayerBar(nav: Navigator) {
                         t.title,
                         style = Type.xs.semiBold.color(palette.text),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable(enabled = t.albumId != null) { t.albumId?.let { nav.go(Screen.Album(it)) } }
+                        overflow = TextOverflow.Ellipsis
                     )
                     BasicText(
                         error ?: t.artists.orEmpty(),
                         style = Type.xs.semiBold.color(if (error != null) palette.red else palette.textSecondary),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable(enabled = t.artistId != null) { t.artistId?.let { nav.go(Screen.Artist(it)) } }
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 val liked = rememberLiked(t.id)
@@ -179,7 +176,7 @@ fun PlayerBar(nav: Navigator) {
 
 /** A slim slider in the phone's style: a thin bar that you click or drag. */
 @Composable
-private fun ThinSlider(
+fun ThinSlider(
     value: Float,
     onChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
@@ -228,13 +225,13 @@ fun QueuePanel(nav: Navigator) {
 
     Column(
         Modifier
-            .padding(top = 8.dp, end = 8.dp, bottom = 8.dp)
+            .padding(top = 16.dp, end = 12.dp, bottom = 12.dp)
             .width(340.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(12.dp))
             .background(palette.background1)
     ) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 20.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             BasicText("Queue", style = Type.l.medium.color(palette.text), modifier = Modifier.weight(1f))
             BasicText("${queue.size} songs", style = Type.xxs.medium.color(palette.textSecondary))
             Spacer(Modifier.width(8.dp))

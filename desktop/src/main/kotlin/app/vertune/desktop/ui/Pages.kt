@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -56,6 +57,7 @@ import app.vertune.desktop.data.Library
 import app.vertune.desktop.data.Track
 import app.vertune.desktop.data.toTrack
 import app.vertune.desktop.player.PlayerController
+import app.vertune.desktop.player.SongCache
 import app.vitune.providers.innertube.Innertube
 import app.vitune.providers.innertube.models.MusicShelfRenderer
 import app.vitune.providers.innertube.models.bodies.BrowseBody
@@ -124,6 +126,29 @@ private fun LazyListScope.trackList(tracks: List<Track>, nav: Navigator, numbere
     }
 }
 
+/**
+ * The phone's download button on playlist and album pages: saves every song for offline.
+ * Shows how many are done while it works, and disappears once everything is saved.
+ */
+@Composable
+private fun CacheButton(tracks: List<Track>) {
+    val palette = LocalPalette.current
+    val cachedIds by SongCache.ids.collectAsState()
+    val pending by SongCache.pending.collectAsState()
+    if (tracks.isEmpty()) return
+    val ids = tracks.map { it.id }.toSet()
+    val saved = ids.count { it in cachedIds }
+    val working = ids.any { it in pending }
+    when {
+        working -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            androidx.compose.material3.CircularProgressIndicator(color = palette.text, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+            BasicText("$saved/${ids.size} saved", style = Type.xxs.medium.color(palette.textSecondary))
+        }
+        saved < ids.size -> HeaderIconButton("download", { SongCache.precacheAll(tracks) }, selected = true)
+        else -> AppIcon("download", palette.textDisabled, size = 18.dp, modifier = Modifier.padding(8.dp))
+    }
+}
+
 // ---------------------------------------------------------------- Album / YouTube playlist
 
 @Composable
@@ -136,6 +161,7 @@ fun AlbumScreen(browseId: String, nav: Navigator) {
                 item {
                     Header(album.title.orEmpty()) {
                         SecondaryTextButton("Enqueue", { tracks.forEach(PlayerController::addToQueue) }, enabled = tracks.isNotEmpty())
+                    CacheButton(tracks)
                         Spacer(Modifier.weight(1f))
                         SecondaryTextButton("Play", { PlayerController.play(tracks) }, enabled = tracks.isNotEmpty())
                     }
@@ -182,6 +208,7 @@ fun PlaylistScreen(browseId: String, nav: Navigator) {
                 item {
                     Header(playlist.title.orEmpty()) {
                         SecondaryTextButton("Enqueue", { tracks.forEach(PlayerController::addToQueue) }, enabled = tracks.isNotEmpty())
+                    CacheButton(tracks)
                         Spacer(Modifier.weight(1f))
                         SecondaryTextButton(saved ?: "Save to my playlists", {
                             val id = Library.createPlaylist(playlist.title ?: "Playlist")
@@ -234,6 +261,7 @@ fun LocalPlaylistScreen(id: Long, nav: Navigator) {
             item {
                 Header(name) {
                     SecondaryTextButton("Enqueue", { tracks.forEach(PlayerController::addToQueue) }, enabled = tracks.isNotEmpty())
+                    CacheButton(tracks)
                     Spacer(Modifier.weight(1f))
                     SecondaryTextButton("Rename", { renaming = true })
                     SecondaryTextButton("Delete", { confirmDelete = true })
@@ -308,6 +336,7 @@ private fun BuiltInPage(title: String, tracks: List<Track>?, empty: String, nav:
             item {
                 Header(title, Modifier.padding(horizontal = 0.dp)) {
                     SecondaryTextButton("Enqueue", { tracks?.forEach(PlayerController::addToQueue) }, enabled = !tracks.isNullOrEmpty())
+                    CacheButton(tracks.orEmpty())
                     Spacer(Modifier.weight(1f))
                     headerExtra()
                 }
@@ -349,6 +378,27 @@ fun FavoritesScreen(nav: Navigator) = BuiltInPage(
 fun HistoryScreen(nav: Navigator) = BuiltInPage(
     "History", rememberLibrary { Library.history() }, "Songs you listen to show up here.", nav
 )
+
+/** Songs saved on this Mac, which play without internet (the phone's Offline playlist). */
+@Composable
+fun OfflineScreen(nav: Navigator) {
+    val ids by SongCache.ids.collectAsState()
+    val tracks = rememberLibrary(ids) { Library.songsWithIds(SongCache.idsByRecent()) }
+    val bytes by SongCache.bytes.collectAsState()
+    BuiltInPage(
+        "Offline", tracks,
+        "Songs are saved here as you play them, so they start instantly and play without internet. " +
+            "You can also right-click a song and choose Save for offline.",
+        nav,
+        info = if (tracks.isNullOrEmpty()) null else "${tracks.size} songs • ${formatBytes(bytes)} on this Mac"
+    )
+}
+
+fun formatBytes(bytes: Long): String = when {
+    bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
+    bytes >= 1L shl 20 -> "${bytes shr 20} MB"
+    else -> "${bytes shr 10} KB"
+}
 
 private enum class Period(val label: String, val days: Long?) {
     Week("Past week", 7), Month("Past month", 30), Year("Past year", 365), All("All time", null)

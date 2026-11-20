@@ -1,5 +1,10 @@
 package app.vertune.desktop.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.DefaultContextMenuRepresentation
 import androidx.compose.foundation.LocalContextMenuRepresentation
 import androidx.compose.foundation.background
@@ -17,6 +22,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import app.vertune.desktop.player.PlayerController
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,22 +44,24 @@ fun App(nav: Navigator, @Suppress("UNUSED_PARAMETER") logo: Painter) {
                 itemHoverColor = palette.text.copy(alpha = 0.1f)
             )
         ) {
+          Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().background(palette.background0)) {
                 Row(Modifier.weight(1f)) {
                     Rail(nav)
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                         Content(nav)
-                        if (nav.current is Screen.Home) FloatingButton(
-                            "search",
-                            { nav.go(Screen.Search()) },
-                            Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 24.dp)
-                        )
                     }
                     if (nav.showQueue) QueuePanel(nav)
                 }
                 PlayerBar(nav)
             }
+            AnimatedVisibility(
+                visible = nav.showPlayer && PlayerController.current.collectAsState().value != null,
+                enter = slideInVertically { it } + fadeIn(),
+                exit = slideOutVertically { it } + fadeOut()
+            ) { NowPlaying(nav) }
             nav.addToPlaylist?.let { track -> AddToPlaylistDialog(track) { nav.addToPlaylist = null } }
+          }
         }
     }
 }
@@ -78,6 +87,7 @@ private fun Content(nav: Navigator) {
             Screen.Favorites -> FavoritesScreen(nav)
             Screen.History -> HistoryScreen(nav)
             Screen.Top -> TopScreen(nav)
+            Screen.Offline -> OfflineScreen(nav)
             Screen.Settings -> SettingsScreen()
         }
     }

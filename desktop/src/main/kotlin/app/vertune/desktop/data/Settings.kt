@@ -32,10 +32,19 @@ object Settings {
     private fun boolean(key: String, default: Boolean) =
         Value(key, default, { k, d -> getBoolean(k, d) }, { k, v -> putBoolean(k, v) })
 
+    private fun long(key: String, default: Long) =
+        Value(key, default, { k, d -> getLong(k, d) }, { k, v -> putLong(k, v) })
+
     private fun float(key: String, default: Float) =
         Value(key, default, { k, d -> getFloat(k, d) }, { k, v -> putFloat(k, v) })
 
     val volume = float("volume", 0.8f)
+
+    /** Song cache size in MB (0 = no limit). The phone's default is 2 GB. */
+    val songCacheMb = long("songCache.mb", 2048L)
+
+    /** Stops new songs being saved, like the phone's "Pause song cache". */
+    val pauseSongCache = boolean("songCache.paused", false)
 
     val discordEnabled = boolean("discord.enabled", false)
 

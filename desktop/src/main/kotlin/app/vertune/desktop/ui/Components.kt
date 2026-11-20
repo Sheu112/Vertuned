@@ -9,6 +9,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import app.vertune.desktop.data.Library
 import app.vertune.desktop.data.Track
 import app.vertune.desktop.player.PlayerController
+import app.vertune.desktop.player.SongCache
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -256,6 +259,8 @@ fun songMenuItems(track: Track, nav: Navigator): List<ContextMenuItem> = buildLi
         }
     )
     add(ContextMenuItem("Add to playlist…") { nav.addToPlaylist = track })
+    if (SongCache.isCached(track.id)) add(ContextMenuItem("Remove from offline") { SongCache.remove(track.id) })
+    else add(ContextMenuItem("Save for offline") { SongCache.precache(track) })
     track.albumId?.let { id -> add(ContextMenuItem("Go to album") { nav.go(Screen.Album(id)) }) }
     track.artistId?.let { id -> add(ContextMenuItem("More of ${track.artists ?: "this artist"}") { nav.go(Screen.Artist(id)) }) }
     add(
@@ -307,23 +312,14 @@ fun ItemTile(
     }
 }
 
-/** The phone's built-in playlist tiles (Favorites, My top, History): a coloured icon and a name. */
+/** The phone's built-in playlist tiles (Favorites, My top, History): a coloured icon on a square card. */
 @Composable
 fun IconTile(icon: String, tint: Color, title: String, onClick: () -> Unit) {
     val palette = LocalPalette.current
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier
-            .hoverHighlight(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(Dimens.alternativePadding)
-            .width(Dimens.albumThumbnail)
-    ) {
-        Box(Modifier.size(Dimens.albumThumbnail), contentAlignment = Alignment.Center) {
-            AppIcon(icon, tint, size = 24.dp)
+    BigTile(title, null, onClick) {
+        Box(Modifier.fillMaxSize().background(palette.background1), contentAlignment = Alignment.Center) {
+            AppIcon(icon, tint, size = 48.dp)
         }
-        BasicText(title, style = Type.xs.semiBold.color(palette.text).copy(textAlign = TextAlign.Center), maxLines = 2)
     }
 }
 
@@ -331,41 +327,39 @@ fun IconTile(icon: String, tint: Color, title: String, onClick: () -> Unit) {
 @Composable
 fun PlaylistTile(name: String, songCount: Int, thumbnails: List<String>, onClick: () -> Unit) {
     val palette = LocalPalette.current
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier
-            .hoverHighlight(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(Dimens.alternativePadding)
-            .width(Dimens.albumThumbnail)
-    ) {
-        Box(Modifier.size(Dimens.albumThumbnail).clip(Dimens.thumbnailShape).background(palette.background1)) {
-            val distinct = thumbnails.distinct()
+    BigTile(name, "$songCount ${if (songCount == 1) "song" else "songs"}", onClick) {
+        val distinct = thumbnails.distinct()
+        BoxWithConstraints(Modifier.fillMaxSize().background(palette.background1)) {
+            val half = maxWidth / 2
             when {
-                distinct.isEmpty() -> AppIcon("musical_notes", palette.textDisabled, Modifier.align(Alignment.Center))
-                distinct.size < 4 -> Thumbnail(distinct.first(), Dimens.albumThumbnail)
+                distinct.isEmpty() -> AppIcon("musical_notes", palette.textDisabled, Modifier.align(Alignment.Center), size = 48.dp)
+                distinct.size < 4 -> Thumbnail(distinct.first(), maxWidth, RoundedCornerShape(0.dp))
                 else -> Column {
-                    Row { Thumbnail(distinct[0], 54.dp, RoundedCornerShape(0.dp)); Thumbnail(distinct[1], 54.dp, RoundedCornerShape(0.dp)) }
-                    Row { Thumbnail(distinct[2], 54.dp, RoundedCornerShape(0.dp)); Thumbnail(distinct[3], 54.dp, RoundedCornerShape(0.dp)) }
+                    Row { Thumbnail(distinct[0], half, RoundedCornerShape(0.dp)); Thumbnail(distinct[1], half, RoundedCornerShape(0.dp)) }
+                    Row { Thumbnail(distinct[2], half, RoundedCornerShape(0.dp)); Thumbnail(distinct[3], half, RoundedCornerShape(0.dp)) }
                 }
             }
-            BasicText(
-                "$songCount",
-                style = Type.xxs.medium.color(Color.White),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(4.dp)
-                    .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-            )
         }
-        BasicText(
-            name,
-            style = Type.xs.semiBold.color(palette.text).copy(textAlign = TextAlign.Center),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
+    }
+}
+
+/** A square card that fills its grid cell, with the name (and an optional line) underneath. */
+@Composable
+private fun BigTile(title: String, subtitle: String?, onClick: () -> Unit, art: @Composable () -> Unit) {
+    val palette = LocalPalette.current
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .hoverHighlight(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(Dimens.alternativePadding)
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(12.dp))) { art() }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
+            BasicText(title, style = Type.s.semiBold.color(palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) BasicText(subtitle, style = Type.xs.semiBold.color(palette.textSecondary), maxLines = 1)
+        }
     }
 }
 

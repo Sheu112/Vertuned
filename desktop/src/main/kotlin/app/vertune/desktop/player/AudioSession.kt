@@ -65,15 +65,16 @@ class AudioSession(
         val command = buildList {
             add(ffmpeg)
             addAll(listOf("-hide_banner", "-loglevel", "error", "-nostdin"))
-            addAll(
+            val remote = stream.url.startsWith("http")
+            if (remote) addAll(
                 listOf(
                     "-reconnect", "1", "-reconnect_streamed", "1",
                     "-reconnect_on_network_error", "1", "-reconnect_delay_max", "5"
                 )
             )
-            stream.headers["User-Agent"]?.let { addAll(listOf("-user_agent", it)) }
+            if (remote) stream.headers["User-Agent"]?.let { addAll(listOf("-user_agent", it)) }
             val otherHeaders = stream.headers.filterKeys { !it.equals("User-Agent", ignoreCase = true) }
-            if (otherHeaders.isNotEmpty()) {
+            if (remote && otherHeaders.isNotEmpty()) {
                 add("-headers")
                 add(otherHeaders.entries.joinToString("") { "${it.key}: ${it.value}\r\n" })
             }

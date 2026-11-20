@@ -257,7 +257,7 @@ fun PlaylistsScreen(nav: Navigator) {
     )
 
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(Dimens.albumThumbnail + Dimens.alternativePadding * 2),
+        columns = GridCells.Adaptive(PLAYLIST_TILE_MIN),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
         modifier = Modifier.fillMaxSize()
     ) {
@@ -280,8 +280,11 @@ fun PlaylistsScreen(nav: Navigator) {
         item { IconTile("heart", palette.red, "Favorites") { nav.go(Screen.Favorites) } }
         item { IconTile("trending", palette.red, "My top 50") { nav.go(Screen.Top) } }
         item { IconTile("history", palette.textDisabled, "History") { nav.go(Screen.History) } }
+        item { IconTile("download", palette.blue, "Offline") { nav.go(Screen.Offline) } }
         items(playlists, key = { it.id }) { p ->
             PlaylistTile(p.name, p.songCount, p.thumbnails) { nav.go(Screen.LocalPlaylist(p.id)) }
         }
     }
 }
+
+private val PLAYLIST_TILE_MIN = 190.dp

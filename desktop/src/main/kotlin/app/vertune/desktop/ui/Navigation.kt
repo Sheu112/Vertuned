@@ -25,6 +25,7 @@ sealed interface Screen {
     data object Favorites : Screen
     data object History : Screen
     data object Top : Screen
+    data object Offline : Screen
     data object Settings : Screen
 }
 
@@ -40,6 +41,9 @@ class Navigator {
         private set
 
     var showQueue by mutableStateOf(false)
+
+    /** The full "now playing" screen, opened from the player bar. */
+    var showPlayer by mutableStateOf(false)
 
     /** When set, the "Add to playlist" picker is shown for this song. */
     var addToPlaylist by mutableStateOf<Track?>(null)

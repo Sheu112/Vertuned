@@ -320,6 +320,19 @@ object Library {
         """.trimIndent()
     )
 
+    /** The saved songs with these ids, in the order given. */
+    @Synchronized
+    fun songsWithIds(ids: List<String>): List<Track> {
+        if (ids.isEmpty()) return emptyList()
+        val found = connection.prepareStatement(
+            "SELECT * FROM Song WHERE id IN (${ids.joinToString(",") { "?" }})"
+        ).use { st ->
+            ids.forEachIndexed { i, id -> st.setString(i + 1, id) }
+            st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.toTrack()) } }
+        }.associateBy { it.id }
+        return ids.mapNotNull { found[it] }
+    }
+
     @Synchronized
     fun albumTitle(songId: String): String? =
         connection.prepareStatement("SELECT album FROM Song WHERE id = ?").use { st ->
