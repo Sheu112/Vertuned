@@ -75,3 +75,12 @@ tasks.register<JavaExec>("smokeTest") {
     val arch = if (System.getProperty("os.arch") == "aarch64") "arm64" else "x64"
     systemProperty("compose.application.resources.dir", file("resources/macos-$arch").absolutePath)
 }
+
+// The Java runtime that jlink builds has read-only licence files, which made
+// `xattr -dr com.apple.quarantine` print "Permission denied" for each one. Make them writable.
+val runtimeImageDir = layout.buildDirectory.dir("compose/tmp/main/runtime")
+tasks.matching { it.name == "createRuntimeImage" }.configureEach {
+    doLast {
+        runtimeImageDir.get().asFile.walkTopDown().forEach { it.setWritable(true, true) }
+    }
+}
