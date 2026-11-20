@@ -76,7 +76,7 @@ fun YtPlaylistTile(playlist: Innertube.PlaylistItem, nav: Navigator) = ItemTile(
 private fun SongGrid(tracks: List<app.vertune.desktop.data.Track>, nav: Navigator) {
     LazyHorizontalGrid(
         rows = GridCells.Fixed(4),
-        modifier = Modifier.fillMaxWidth().height(4 * 70.dp)
+        modifier = Modifier.fillMaxWidth().height(70.dp * 4)
     ) {
         items(tracks.size) { i ->
             Box(Modifier.width(380.dp)) { SongItem(tracks[i], nav, queue = tracks, index = i) }
@@ -134,7 +134,7 @@ fun DiscoverScreen(nav: Navigator) {
                         SectionTitle("Moods and genres", Modifier.padding(start = 8.dp))
                         LazyHorizontalGrid(
                             rows = GridCells.Fixed(4),
-                            modifier = Modifier.fillMaxWidth().height(4 * (64 + 8).dp)
+                            modifier = Modifier.fillMaxWidth().height(72.dp * 4)
                         ) {
                             items(page.moods.sortedBy { it.title }) { mood ->
                                 MoodItem(mood) {
