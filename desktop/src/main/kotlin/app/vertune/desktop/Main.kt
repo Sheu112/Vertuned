@@ -99,6 +99,8 @@ fun main() {
             title = AppInfo.NAME,
             icon = logo,
             state = windowState,
+            // The mini player takes the main window's place while it's open.
+            visible = !nav.showMiniPlayer,
             onKeyEvent = { event ->
                 // Space plays/pauses (text fields get the key first, so typing still works).
                 when {

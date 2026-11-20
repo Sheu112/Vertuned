@@ -41,7 +41,13 @@ kotlin {
 compose.desktop {
     application {
         mainClass = "app.vertune.desktop.MainKt"
-        jvmArgs += listOf("--enable-native-access=ALL-UNNAMED")
+        jvmArgs += listOf(
+            "--enable-native-access=ALL-UNNAMED",
+            // Lets the mini player reach its macOS window to float over full-screen apps (MacWindows.kt).
+            "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
+            "--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED",
+            "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED"
+        )
 
         // yt-dlp, ffmpeg and quickjs are downloaded into this folder by CI (see build.yml)
         // and shipped inside the app bundle.

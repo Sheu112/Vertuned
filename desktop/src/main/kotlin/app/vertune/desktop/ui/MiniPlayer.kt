@@ -37,6 +37,10 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import app.vertune.desktop.AppInfo
+import app.vertune.desktop.MacWindows
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import app.vertune.desktop.player.PlayerController
 
 /**
@@ -59,6 +63,16 @@ fun MiniPlayerWindow(nav: Navigator, icon: Painter, onOpenMain: () -> Unit) {
         alwaysOnTop = true
     ) {
         remember { window.blendTitleBar(); window.minimumSize = java.awt.Dimension(220, 280) }
+        // Float over every Space and full-screen apps. macOS only allows that for apps without a
+        // Dock icon, so the icon is hidden while the mini player is open (the main window is too).
+        DisposableEffect(Unit) {
+            MacWindows.setDockIconVisible(false)
+            onDispose { MacWindows.setDockIconVisible(true) }
+        }
+        LaunchedEffect(Unit) {
+            delay(FLOAT_DELAY_MS)
+            MacWindows.floatEverywhere(window)
+        }
         VertuneTheme {
             val palette = LocalPalette.current.forPlayer()
             CompositionLocalProvider(LocalPalette provides palette) {
@@ -150,6 +164,9 @@ fun java.awt.Window.blendTitleBar() {
     root.putClientProperty("apple.awt.transparentTitleBar", true)
     root.putClientProperty("apple.awt.windowTitleVisible", false)
 }
+
+/** Gives macOS a moment to create the window before changing how it floats. */
+private const val FLOAT_DELAY_MS = 300L
 
 /** Height of the see-through macOS title bar, kept clear of controls. */
 val TITLE_BAR_HEIGHT = 28.dp
