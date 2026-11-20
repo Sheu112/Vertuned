@@ -72,6 +72,17 @@ jobs:
       - name: Build Mac app
         run: gradle :desktop:packageDmg --configure-on-demand --no-daemon --stacktrace
 
+      # Opens the built app for 25 seconds to make sure it starts and stays open.
+      - name: Launch the app
+        run: |
+          app=desktop/build/compose/binaries/main/app/Vertune.app/Contents/MacOS/Vertune
+          "$app" > launch.log 2>&1 &
+          pid=$!
+          sleep 25
+          log="$HOME/Library/Application Support/Vertune/vertune.log"
+          cat launch.log; echo "---- vertune.log"; cat "$log" || true
+          if kill -0 $pid 2>/dev/null; then echo "App is still running"; kill $pid; else echo "App quit on its own"; exit 1; fi
+
       - name: Check search, yt-dlp, ffmpeg and the library
         continue-on-error: true
         run: gradle :desktop:smokeTest --configure-on-demand --no-daemon

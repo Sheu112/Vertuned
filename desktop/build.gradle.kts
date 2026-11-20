@@ -48,7 +48,8 @@ compose.desktop {
             packageVersion = "1.0.0"
             description = "Vertune music player"
             vendor = "Vertune"
-            modules("java.sql", "java.naming", "java.prefs", "jdk.unsupported", "java.desktop")
+            // Bundle the whole Java runtime, so a module that a library needs is never missing.
+            includeAllModules = true
 
             macOS {
                 bundleID = "app.vertune.desktop"

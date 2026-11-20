@@ -37,11 +37,18 @@ private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 fun main() {
     // Keep a log file next to the library, to help when something goes wrong.
+    // Output still goes to the terminal too, when the app is started from one.
     runCatching {
-        val log = PrintStream(Paths.logFile.outputStream(), true)
-        System.setErr(log)
-        System.setOut(log)
+        val file = Paths.logFile.outputStream()
+        System.setOut(PrintStream(Tee(System.out, file), true))
+        System.setErr(PrintStream(Tee(System.err, file), true))
     }
+    Thread.setDefaultUncaughtExceptionHandler { thread, e ->
+        System.err.println("Uncaught exception in ${thread.name}")
+        e.printStackTrace()
+    }
+    println("${AppInfo.NAME} ${AppInfo.VERSION} starting, Java ${System.getProperty("java.version")}, " +
+        "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}")
     System.setProperty("apple.awt.application.name", AppInfo.NAME)
 
     SingletonImageLoader.setSafe { context ->
@@ -127,6 +134,24 @@ private fun startDiscord(): DiscordPresence {
         }.collect { presence.update(it) }
     }
     return presence
+}
+
+/** Writes everything to two streams at once (the terminal and the log file). */
+private class Tee(private val a: java.io.OutputStream, private val b: java.io.OutputStream) : java.io.OutputStream() {
+    override fun write(byte: Int) {
+        a.write(byte)
+        b.write(byte)
+    }
+
+    override fun write(bytes: ByteArray, off: Int, len: Int) {
+        a.write(bytes, off, len)
+        b.write(bytes, off, len)
+    }
+
+    override fun flush() {
+        a.flush()
+        b.flush()
+    }
 }
 
 private const val IMAGE_CACHE_BYTES = 256L * 1024 * 1024
