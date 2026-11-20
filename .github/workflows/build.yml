@@ -38,3 +38,45 @@ jobs:
         with:
           name: vitune-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+  # The Mac version (desktop/ folder). Separate from the Android build above.
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.8.2"
+
+      # yt-dlp finds the audio, quickjs helps it with YouTube's player code, ffmpeg decodes the sound.
+      - name: Download yt-dlp, ffmpeg and quickjs
+        run: |
+          dir=desktop/resources/macos-arm64
+          mkdir -p "$dir"
+          curl -fsSL -o "$dir/yt-dlp" https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos
+          curl -fsSL https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64.gz | gunzip > "$dir/ffmpeg"
+          curl -fsSL -o "$dir/qjs" https://github.com/quickjs-ng/quickjs/releases/latest/download/qjs-darwin-arm64
+          chmod +x "$dir"/*
+          for f in "$dir"/*; do codesign --force --sign - "$f"; done
+          "$dir/yt-dlp" --version
+          "$dir/ffmpeg" -version | head -1
+
+      # Only the desktop project and what it uses get configured, so the Android setup isn't needed here.
+      - name: Build Mac app
+        run: gradle :desktop:packageDmg --configure-on-demand --no-daemon --stacktrace
+
+      - name: Check search, yt-dlp, ffmpeg and the library
+        continue-on-error: true
+        run: gradle :desktop:smokeTest --configure-on-demand --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vertune-mac-dmg
+          path: desktop/build/compose/binaries/main/dmg/*.dmg

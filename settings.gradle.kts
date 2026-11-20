@@ -30,6 +30,7 @@ plugins {
 rootProject.name = "vitune"
 
 include(":app")
+include(":desktop")
 include(":core:data")
 include(":core:material-compat")
 include(":core:ui")
