@@ -656,7 +656,7 @@ private fun DatabaseSettings() = SettingsCategoryScreen(str("database", "Databas
     confirmRestore?.let { file ->
         ConfirmDialog(str("restore_warning", "Existing data will be overwritten."), { confirmRestore = null }) {
             scope.launch(Dispatchers.IO) {
-                message = runCatching { Library.restore(file); "Restored ${file.name}" }.getOrElse { "Restore failed: ${it.message}" }
+                message = runCatching { Library.restore(file) }.getOrElse { "Restore failed: ${it.message}" }
             }
         }
     }

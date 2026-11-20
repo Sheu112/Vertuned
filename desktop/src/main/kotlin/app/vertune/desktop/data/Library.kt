@@ -459,18 +459,59 @@ object Library {
         connection.createStatement().use { it.executeUpdate("VACUUM INTO '${target.absolutePath.replace("'", "''")}'") }
     }
 
-    /** Replaces the library with a backup made by [backup]. */
+    private val RESTORED_TABLES = listOf("Song", "Event", "Playlist", "SongPlaylistMap", "Lyrics", "SearchQuery", "Bookmark")
+
+    /** True if [file] is a backup made by the phone app (its tables are laid out differently). */
     @Synchronized
-    fun restore(source: File) {
+    fun isPhoneBackup(file: File): Boolean = connection.createStatement().use { st ->
+        st.executeUpdate("ATTACH DATABASE '${file.absolutePath.replace("'", "''")}' AS probe")
+        try {
+            columns(st, "probe", "Song").contains("artistsText")
+        } finally {
+            st.executeUpdate("DETACH DATABASE probe")
+        }
+    }
+
+    private fun columns(st: java.sql.Statement, schema: String, table: String): List<String> =
+        st.executeQuery("PRAGMA $schema.table_info('$table')").use { rs -> buildList { while (rs.next()) add(rs.getString("name")) } }
+
+    /**
+     * Replaces the library with a backup made by [backup]. A backup from the phone app is
+     * imported instead (adding to the library), since its tables are laid out differently.
+     * Returns a short description of what happened.
+     */
+    @Synchronized
+    fun restore(source: File): String {
+        if (isPhoneBackup(source)) {
+            // "Existing data will be overwritten", as on the phone: start from an empty library.
+            connection.createStatement().use { st ->
+                for (table in RESTORED_TABLES.reversed()) st.executeUpdate("DELETE FROM $table")
+            }
+            val (songs, listens) = importPhoneBackup(source)
+            return "Imported $songs songs and $listens listens from the phone backup"
+        }
         connection.createStatement().use { st ->
             st.executeUpdate("ATTACH DATABASE '${source.absolutePath.replace("'", "''")}' AS backup")
             try {
-                for (table in listOf("Song", "Event", "Playlist", "SongPlaylistMap", "Lyrics", "SearchQuery", "Bookmark")) {
-                    val exists = st.executeQuery("SELECT COUNT(*) FROM backup.sqlite_master WHERE name = '$table'").use { it.next() && it.getInt(1) > 0 }
-                    if (!exists) continue
-                    st.executeUpdate("DELETE FROM $table")
-                    st.executeUpdate("INSERT INTO $table SELECT * FROM backup.$table")
+                if (columns(st, "backup", "Song").isEmpty()) error("this isn't a Vertune backup")
+                // All or nothing, so a bad file can't leave the library half replaced.
+                connection.autoCommit = false
+                try {
+                    for (table in RESTORED_TABLES) {
+                        val shared = columns(st, "backup", table).intersect(columns(st, "main", table).toSet())
+                        if (shared.isEmpty()) continue
+                        val cols = shared.joinToString(", ")
+                        st.executeUpdate("DELETE FROM $table")
+                        st.executeUpdate("INSERT OR IGNORE INTO $table ($cols) SELECT $cols FROM backup.$table")
+                    }
+                    connection.commit()
+                } catch (e: Exception) {
+                    connection.rollback()
+                    throw e
+                } finally {
+                    connection.autoCommit = true
                 }
+                return "Restored ${source.name}"
             } finally {
                 st.executeUpdate("DETACH DATABASE backup")
                 changed()
@@ -507,6 +548,9 @@ object Library {
         connection.createStatement().use { st ->
             st.executeUpdate("ATTACH DATABASE '${file.absolutePath.replace("'", "''")}' AS phone")
             try {
+                fun phoneHas(table: String) =
+                    st.executeQuery("SELECT COUNT(*) FROM phone.sqlite_master WHERE name = '$table'").use { it.next() && it.getInt(1) > 0 }
+                if (!phoneHas("Song")) error("this isn't a backup from the phone app")
                 val hasAlbums = st.executeQuery(
                     "SELECT COUNT(*) FROM phone.sqlite_master WHERE name IN ('Album', 'SongAlbumMap')"
                 ).use { it.next() && it.getInt(1) == 2 }
@@ -518,13 +562,20 @@ object Library {
                     "(SELECT m.albumId FROM phone.SongAlbumMap m WHERE m.songId = s.id LIMIT 1)"
                 } else "NULL"
 
+                val artistIdSelect = if (phoneHas("SongArtistMap")) {
+                    "(SELECT m.artistId FROM phone.SongArtistMap m WHERE m.songId = s.id LIMIT 1)"
+                } else "NULL"
+                val explicitSelect = if ("explicit" in columns(st, "phone", "Song")) "COALESCE(s.explicit, 0)" else "0"
+
                 val songs = st.executeUpdate(
                     """
-                    INSERT INTO Song (id, title, artists, album, albumId, thumbnail, durationText, likedAt)
-                    SELECT s.id, s.title, s.artistsText, $albumSelect, $albumIdSelect, s.thumbnailUrl, s.durationText, s.likedAt
+                    INSERT INTO Song (id, title, artists, artistId, album, albumId, thumbnail, durationText, explicit, likedAt)
+                    SELECT s.id, s.title, s.artistsText, $artistIdSelect, $albumSelect, $albumIdSelect, s.thumbnailUrl, s.durationText,
+                        $explicitSelect, s.likedAt
                     FROM phone.Song s WHERE s.id NOT LIKE 'local:%'
                     ON CONFLICT(id) DO UPDATE SET likedAt = COALESCE(likedAt, excluded.likedAt),
-                        album = COALESCE(album, excluded.album)
+                        album = COALESCE(album, excluded.album),
+                        artistId = COALESCE(artistId, excluded.artistId)
                     """.trimIndent()
                 )
                 val events = st.executeUpdate(
@@ -562,8 +613,6 @@ object Library {
                         )
                     }
                 }
-                fun phoneHas(table: String) =
-                    st.executeQuery("SELECT COUNT(*) FROM phone.sqlite_master WHERE name = '$table'").use { it.next() && it.getInt(1) > 0 }
                 if (phoneHas("Lyrics")) runCatching {
                     st.executeUpdate(
                         "INSERT OR IGNORE INTO Lyrics (songId, fixed, synced) SELECT songId, fixed, synced FROM phone.Lyrics"

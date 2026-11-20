@@ -1,8 +1,7 @@
 package app.vertune.desktop.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -94,8 +93,9 @@ private fun MiniPlayer(onClose: () -> Unit, onOpenMain: () -> Unit) {
                 if (t != null) Thumbnail(t.thumbnailSized(1200), side, RoundedCornerShape(12.dp), fallback = t.thumbnailFallback())
                 else AppIcon("musical_notes", palette.textDisabled, Modifier.align(Alignment.Center), size = 48.dp)
 
-                AnimatedVisibility(hovered, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
-                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
+                val overlay by animateFloatAsState(if (hovered) 1f else 0f)
+                if (overlay > 0f) {
+                    Box(Modifier.fillMaxSize().alpha(overlay).background(Color.Black.copy(alpha = 0.45f))) {
                         AppIconButton("expand", Color.White, { onClose(); onOpenMain() }, Modifier.align(Alignment.TopEnd), size = 18.dp)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
