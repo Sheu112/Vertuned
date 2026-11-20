@@ -15,14 +15,28 @@ data class Track(
     val explicit: Boolean = false
 ) {
     /** A bigger version of the artwork, for the player and Discord. */
-    val largeThumbnail: String?
-        get() = thumbnail?.let { url ->
-            when {
-                url.startsWith("https://lh3.googleusercontent.com") ->
-                    url.substringBefore("=w").substringBefore("-w") + "=w544-h544"
-                else -> url
-            }
+    val largeThumbnail: String? get() = thumbnailSized(544)
+
+    /**
+     * The artwork at [size] pixels, like the phone's String.thumbnail(): Google image links
+     * take a size; YouTube video stills are swapped for the full-size one.
+     */
+    fun thumbnailSized(size: Int): String? = thumbnail?.let { url ->
+        when {
+            url.startsWith("https://lh3.googleusercontent.com") || url.startsWith("https://yt3.googleusercontent.com") ->
+                url.substringBefore('=') + "=w$size-h$size"
+            url.startsWith("https://yt3.ggpht.com") -> url.substringBefore('=') + "=w$size-h$size-s$size"
+            url.contains("i.ytimg.com/vi/") -> "https://i.ytimg.com/vi/" +
+                url.substringAfter("/vi/").substringBefore('/') + "/" + (if (size > 480) "maxresdefault.jpg" else "hqdefault.jpg")
+            else -> url
         }
+    }
+
+    /** A smaller backup for [thumbnailSized], for videos that have no full-size still. */
+    fun thumbnailFallback(): String? = thumbnail?.let { url ->
+        if (url.contains("i.ytimg.com/vi/")) "https://i.ytimg.com/vi/" + url.substringAfter("/vi/").substringBefore('/') + "/hqdefault.jpg"
+        else url
+    }
 
     val durationMs: Long
         get() = durationText?.let(::parseDuration) ?: 0L

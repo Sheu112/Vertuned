@@ -57,6 +57,7 @@ object SongCache {
     val bytes: StateFlow<Long> = mutableBytes.asStateFlow()
 
     private fun fileFor(id: String) = File(dir, "${safe(id)}.audio")
+    private fun lengthFor(id: String) = File(dir, "${safe(id)}.ms")
     private fun safe(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_")
 
     private fun files() = dir.listFiles { f -> f.isFile && f.name.endsWith(".audio") }.orEmpty().toList()
@@ -89,6 +90,7 @@ object SongCache {
         if (isCached(track.id) || !inProgress.add(track.id)) return
         try {
             download(stream, fileFor(track.id))
+            (stream.durationMs ?: track.durationMs.takeIf { it > 0 })?.let { lengthFor(track.id).writeText(it.toString()) }
             runCatching { Library.save(track) }
             evict(keep = track.id)
         } catch (e: Exception) {
@@ -129,13 +131,33 @@ object SongCache {
         }
     }
 
+    /**
+     * How long a saved song is. Saved next to the song; for songs saved before that, ffmpeg
+     * reads it from the file.
+     */
+    fun durationMs(id: String, ffmpeg: String?): Long? {
+        runCatching { lengthFor(id).readText().trim().toLong() }.getOrNull()?.takeIf { it > 0 }?.let { return it }
+        val tool = ffmpeg ?: return null
+        return runCatching {
+            val p = ProcessBuilder(tool, "-hide_banner", "-nostdin", "-i", fileFor(id).absolutePath)
+                .redirectErrorStream(true).start()
+            val out = p.inputStream.bufferedReader().readText()
+            p.waitFor()
+            val m = Regex("Duration: (\\d+):(\\d+):(\\d+)\\.(\\d+)").find(out) ?: return@runCatching null
+            val (h, mi, sec, frac) = m.destructured
+            ((h.toLong() * 3600 + mi.toLong() * 60 + sec.toLong()) * 1000 + frac.padEnd(3, '0').take(3).toLong())
+                .also { lengthFor(id).writeText(it.toString()) }
+        }.getOrNull()
+    }
+
     fun remove(id: String) {
+        lengthFor(id).delete()
         fileFor(id).delete()
         refresh()
     }
 
     fun clear() {
-        files().forEach { it.delete() }
+        dir.listFiles().orEmpty().forEach { it.delete() }
         refresh()
     }
 
@@ -150,6 +172,7 @@ object SongCache {
             if (keep != null && f.name == "${safe(keep)}.audio") continue
             total -= f.length()
             f.delete()
+            File(dir, f.name.removeSuffix(".audio") + ".ms").delete()
         }
         refresh()
     }

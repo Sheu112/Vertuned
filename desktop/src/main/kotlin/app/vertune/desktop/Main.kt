@@ -56,8 +56,8 @@ fun main() {
             .components { add(KtorNetworkFetcherFactory()) }
             .diskCache {
                 DiskCache.Builder()
-                    .directory(File(Paths.dataDir, "image-cache").toOkioPath())
-                    .maxSizeBytes(IMAGE_CACHE_BYTES)
+                    .directory(Paths.imageCacheDir.toOkioPath())
+                    .maxSizeBytes(app.vertune.desktop.data.Settings.imageCacheMb.value.coerceAtLeast(16L) * 1024 * 1024)
                     .build()
             }
             .build()
@@ -158,6 +158,5 @@ private class Tee(private val a: java.io.OutputStream, private val b: java.io.Ou
     }
 }
 
-private const val IMAGE_CACHE_BYTES = 256L * 1024 * 1024
 private const val MIN_WIDTH = 960
 private const val MIN_HEIGHT = 640

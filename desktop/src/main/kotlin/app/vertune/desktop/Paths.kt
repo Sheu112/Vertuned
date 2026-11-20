@@ -17,6 +17,8 @@ object Paths {
 
     val databaseFile get() = File(dataDir, "library.db")
     val logFile get() = File(dataDir, "vertune.log")
+    val imageCacheDir get() = File(dataDir, "image-cache")
+    val quickPicksFile get() = File(dataDir, "quick-picks.json")
 
     /**
      * The helper programs (yt-dlp, ffmpeg, quickjs) are shipped inside the app bundle. They are

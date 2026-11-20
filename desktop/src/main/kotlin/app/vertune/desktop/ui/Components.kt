@@ -31,6 +31,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -61,11 +63,10 @@ object Dimens {
     val headerHeight = 140.dp
     val itemPadding = 8.dp
     val alternativePadding = 12.dp
-    val thumbnailShape = RoundedCornerShape(8.dp)
+    /** Follows Settings → Appearance → Thumbnail roundness. */
+    val thumbnailShape get() = RoundedCornerShape(Look.roundness.dp)
 }
 
-/** The phone's "surface" colour on a pure black background (grey buttons and chips). */
-val Palette.surface get() = Color(0xff272727)
 
 /** Big right-aligned page title with a row of actions underneath, like the phone app. */
 @Composable
@@ -116,12 +117,22 @@ fun HeaderIconButton(name: String, onClick: () -> Unit, selected: Boolean = true
 }
 
 @Composable
-fun Thumbnail(url: String?, size: Dp, shape: Shape = Dimens.thumbnailShape, modifier: Modifier = Modifier, overlay: @Composable BoxScope.() -> Unit = {}) {
+fun Thumbnail(
+    url: String?,
+    size: Dp,
+    shape: Shape = Dimens.thumbnailShape,
+    modifier: Modifier = Modifier,
+    fallback: String? = null,
+    overlay: @Composable BoxScope.() -> Unit = {}
+) {
+    var failed by remember(url) { mutableStateOf(false) }
     Box(modifier.size(size).clip(shape).background(LocalPalette.current.background1)) {
-        if (url != null) AsyncImage(
-            model = url,
+        val model = if (failed && fallback != null) fallback else url
+        if (model != null) AsyncImage(
+            model = model,
             contentDescription = null,
             contentScale = ContentScale.Crop,
+            onError = { if (fallback != null) failed = true },
             modifier = Modifier.fillMaxSize()
         )
         overlay()
@@ -191,6 +202,8 @@ fun SongItem(
     extraMenu: List<ContextMenuItem> = emptyList(),
     modifier: Modifier = Modifier
 ) {
+    val hideExplicit by app.vertune.desktop.data.Settings.hideExplicit.flow.collectAsState()
+    if (hideExplicit && track.explicit) return
     val palette = LocalPalette.current
     val current by PlayerController.current.collectAsState()
     val playing by PlayerController.isPlaying.collectAsState()
@@ -314,9 +327,9 @@ fun ItemTile(
 
 /** The phone's built-in playlist tiles (Favorites, My top, History): a coloured icon on a square card. */
 @Composable
-fun IconTile(icon: String, tint: Color, title: String, onClick: () -> Unit) {
+fun IconTile(icon: String, tint: Color, title: String, grid: Boolean = true, onClick: () -> Unit) {
     val palette = LocalPalette.current
-    BigTile(title, null, onClick) {
+    BigTile(title, null, onClick, grid) {
         Box(Modifier.fillMaxSize().background(palette.background1), contentAlignment = Alignment.Center) {
             AppIcon(icon, tint, size = 48.dp)
         }
@@ -325,9 +338,9 @@ fun IconTile(icon: String, tint: Color, title: String, onClick: () -> Unit) {
 
 /** A collage of up to four covers, like the phone's playlist thumbnails. */
 @Composable
-fun PlaylistTile(name: String, songCount: Int, thumbnails: List<String>, onClick: () -> Unit) {
+fun PlaylistTile(name: String, songCount: Int, thumbnails: List<String>, grid: Boolean = true, onClick: () -> Unit) {
     val palette = LocalPalette.current
-    BigTile(name, "$songCount ${if (songCount == 1) "song" else "songs"}", onClick) {
+    BigTile(name, plural("song_count_plural", songCount, "$songCount ${if (songCount == 1) "song" else "songs"}"), onClick, grid) {
         val distinct = thumbnails.distinct()
         BoxWithConstraints(Modifier.fillMaxSize().background(palette.background1)) {
             val half = maxWidth / 2
@@ -343,10 +356,31 @@ fun PlaylistTile(name: String, songCount: Int, thumbnails: List<String>, onClick
     }
 }
 
-/** A square card that fills its grid cell, with the name (and an optional line) underneath. */
+/**
+ * A square card that fills its grid cell, with the name (and an optional line) underneath; or,
+ * when the playlists are shown as rows ([grid] off), the artwork on the left with the name beside it.
+ */
 @Composable
-private fun BigTile(title: String, subtitle: String?, onClick: () -> Unit, art: @Composable () -> Unit) {
+private fun BigTile(title: String, subtitle: String?, onClick: () -> Unit, grid: Boolean = true, art: @Composable () -> Unit) {
     val palette = LocalPalette.current
+    if (!grid) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .hoverHighlight(RoundedCornerShape(12.dp))
+                .clickable(onClick = onClick)
+                .padding(vertical = Dimens.itemPadding, horizontal = 8.dp)
+        ) {
+            Box(Modifier.size(Dimens.albumThumbnail).clip(Dimens.thumbnailShape)) { art() }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
+                BasicText(title, style = Type.xs.semiBold.color(palette.text), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (subtitle != null) BasicText(subtitle, style = Type.xs.semiBold.color(palette.textSecondary), maxLines = 1)
+            }
+        }
+        return
+    }
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier

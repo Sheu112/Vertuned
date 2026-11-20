@@ -20,7 +20,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
+import app.vertune.desktop.data.Settings
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +47,7 @@ import app.vitune.providers.innertube.requests.discoverPage
 import app.vitune.providers.innertube.requests.relatedPage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 
 val pagePadding = Modifier.padding(horizontal = 16.dp)
 
@@ -88,14 +91,10 @@ private fun SongGrid(tracks: List<app.vertune.desktop.data.Track>, nav: Navigato
 
 @Composable
 fun QuickPicksScreen(nav: Navigator) {
-    val related = rememberLoad(Unit) {
-        val seed = Library.top(1).firstOrNull()?.track ?: Library.history(1).firstOrNull()
-        val trending = if (seed == null) Innertube.discoverPage()?.getOrNull()?.trending?.songs?.firstOrNull()?.toTrack() else null
-        val id = seed?.id ?: trending?.id ?: return@rememberLoad Innertube.RelatedPage()
-        Innertube.relatedPage(NextBody(videoId = id))?.getOrNull() ?: Innertube.RelatedPage()
-    }
+    val source by Settings.quickPicksSource.flow.collectAsState()
+    val related = rememberLoad(source) { withContext(Dispatchers.IO) { loadQuickPicks(source) } }
     LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
-        item { Header("Quick picks") }
+        item { Header(str("quick_picks", "Quick picks")) }
         item {
             related.Show { r ->
                 Column(pagePadding) {
@@ -126,7 +125,7 @@ fun QuickPicksScreen(nav: Navigator) {
 fun DiscoverScreen(nav: Navigator) {
     val discover = rememberLoad(Unit) { Innertube.discoverPage()?.getOrNull() }
     LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
-        item { Header("Discover") }
+        item { Header(str("discover", "Discover")) }
         item {
             discover.Show { page ->
                 Column(pagePadding) {
@@ -213,6 +212,36 @@ fun MoodScreen(title: String, browseId: String, params: String?, nav: Navigator)
     }
 }
 
+private val quickPicksJson = Json { ignoreUnknownKeys = true }
+
+/**
+ * The phone's quick picks: songs related to your most played song of the past week ("Trending")
+ * or the last song you played ("Last interaction"). With "Cache quick picks" on, the last result
+ * is saved so it shows up even offline.
+ */
+private suspend fun loadQuickPicks(source: Settings.QuickPicksSource): Innertube.RelatedPage {
+    val weekAgo = System.currentTimeMillis() - WEEK_MS
+    val seed = runCatching {
+        when (source) {
+            Settings.QuickPicksSource.Trending -> Library.top(1, weekAgo).firstOrNull()?.track ?: Library.top(1).firstOrNull()?.track
+            Settings.QuickPicksSource.LastInteraction -> Library.history(1).firstOrNull()
+        } ?: Library.history(1).firstOrNull()
+    }.getOrNull()
+    val id = seed?.id ?: Innertube.discoverPage()?.getOrNull()?.trending?.songs?.firstOrNull()?.toTrack()?.id
+    val page = id?.let { Innertube.relatedPage(NextBody(videoId = it))?.getOrNull() }
+    val file = app.vertune.desktop.Paths.quickPicksFile
+    if (page != null) {
+        if (Settings.quickPicksCache.value) runCatching { file.writeText(quickPicksJson.encodeToString(Innertube.RelatedPage.serializer(), page)) }
+        return page
+    }
+    if (Settings.quickPicksCache.value && file.exists()) {
+        runCatching { return quickPicksJson.decodeFromString(Innertube.RelatedPage.serializer(), file.readText()) }
+    }
+    return Innertube.RelatedPage()
+}
+
+private const val WEEK_MS = 7L * 24 * 60 * 60 * 1000
+
 // ---------------------------------------------------------------- Songs
 
 @Composable
@@ -223,7 +252,7 @@ fun SongsScreen(nav: Navigator) {
     }
     LazyColumn(contentPadding = PaddingValues(bottom = 120.dp)) {
         item {
-            Header("Songs") {
+            Header(str("songs", "Songs")) {
                 SecondaryTextButton("Shuffle", { songs?.takeIf { it.isNotEmpty() }?.let { PlayerController.play(it.shuffled()) } })
             }
         }
@@ -244,27 +273,32 @@ fun PlaylistsScreen(nav: Navigator) {
     var sort by remember { mutableStateOf(Library.PlaylistSort.DateAdded) }
     var descending by remember { mutableStateOf(true) }
     var creating by remember { mutableStateOf(false) }
+    val asGrid by Settings.playlistsAsGrid.flow.collectAsState()
+    val topLength by Settings.topListLength.flow.collectAsState()
     val version by Library.version.collectAsState()
     val playlists by produceState(emptyList<Library.PlaylistPreview>(), version, sort, descending) {
         value = withContext(Dispatchers.IO) { runCatching { Library.playlists(sort, descending) }.getOrDefault(emptyList()) }
     }
+    val arrowRotation by animateFloatAsState(if (descending) 180f else 0f)
 
     if (creating) TextFieldDialog(
-        title = "New playlist",
-        hint = "Enter the playlist name",
+        title = str("new_playlist", "New playlist"),
+        hint = str("enter_playlist_name_prompt", "Enter the playlist name"),
         onDismiss = { creating = false },
         onDone = { name -> Library.createPlaylist(name) }
     )
 
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(PLAYLIST_TILE_MIN),
+        columns = if (asGrid) GridCells.Adaptive(PLAYLIST_TILE_MIN) else GridCells.Fixed(1),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
-            Header("Playlists", Modifier.padding(horizontal = 0.dp)) {
-                SecondaryTextButton("New playlist", { creating = true })
+        item(key = "header", span = { GridItemSpan(maxLineSpan) }) {
+            Header(str("playlists", "Playlists"), Modifier.padding(horizontal = 0.dp)) {
+                SecondaryTextButton(str("new_playlist", "New playlist"), { creating = true })
                 Box(Modifier.weight(1f))
+                HeaderIconButton(if (asGrid) "grid" else "list", { Settings.playlistsAsGrid.value = !asGrid })
+                Box(Modifier.width(1.dp).height(8.dp).background(palette.textDisabled))
                 HeaderIconButton("medical", { sort = Library.PlaylistSort.SongCount }, sort == Library.PlaylistSort.SongCount)
                 HeaderIconButton("text", { sort = Library.PlaylistSort.Name }, sort == Library.PlaylistSort.Name)
                 HeaderIconButton("time", { sort = Library.PlaylistSort.DateAdded }, sort == Library.PlaylistSort.DateAdded)
@@ -272,19 +306,78 @@ fun PlaylistsScreen(nav: Navigator) {
                     "arrow_up",
                     palette.text,
                     { descending = !descending },
-                    Modifier.rotate(if (descending) 180f else 0f),
+                    Modifier.rotate(arrowRotation),
                     size = 18.dp
                 )
             }
         }
-        item { IconTile("heart", palette.red, "Favorites") { nav.go(Screen.Favorites) } }
-        item { IconTile("trending", palette.red, "My top 50") { nav.go(Screen.Top) } }
-        item { IconTile("history", palette.textDisabled, "History") { nav.go(Screen.History) } }
-        item { IconTile("download", palette.blue, "Offline") { nav.go(Screen.Offline) } }
+        item(key = "favorites") { IconTile("heart", palette.red, str("favorites", "Favorites"), asGrid) { nav.go(Screen.Favorites) } }
+        item(key = "offline") { IconTile("airplane", palette.blue, str("offline", "Offline"), asGrid) { nav.go(Screen.Offline) } }
+        item(key = "top") {
+            IconTile("trending", palette.red, str("format_my_top_playlist", "My top $topLength", topLength), asGrid) { nav.go(Screen.Top) }
+        }
+        item(key = "history") { IconTile("history", palette.textDisabled, str("history", "History"), asGrid) { nav.go(Screen.History) } }
         items(playlists, key = { it.id }) { p ->
-            PlaylistTile(p.name, p.songCount, p.thumbnails) { nav.go(Screen.LocalPlaylist(p.id)) }
+            PlaylistTile(p.name, p.songCount, p.thumbnails, asGrid) { nav.go(Screen.LocalPlaylist(p.id)) }
         }
     }
 }
 
 private val PLAYLIST_TILE_MIN = 190.dp
+
+// ---------------------------------------------------------------- Artists and albums (bookmarked)
+
+@Composable
+private fun rememberBookmarks(kind: String): List<Library.Bookmark>? {
+    val version by Library.version.collectAsState()
+    val list by produceState<List<Library.Bookmark>?>(null, version) {
+        value = withContext(Dispatchers.IO) { runCatching { Library.bookmarks(kind) }.getOrDefault(emptyList()) }
+    }
+    return list
+}
+
+/** The phone's Artists tab: the artists you've bookmarked, as round pictures. */
+@Composable
+fun ArtistsScreen(nav: Navigator) {
+    val artists = rememberBookmarks(Library.BOOKMARK_ARTIST)
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(Dimens.artistThumbnail + Dimens.alternativePadding * 2),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) { Header(str("artists", "Artists"), Modifier.padding(horizontal = 0.dp)) }
+        when {
+            artists == null -> item(span = { GridItemSpan(maxLineSpan) }) { Loading() }
+            artists.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                Message("Bookmark artists with the bookmark button on their page and they show up here.")
+            }
+            else -> items(artists, key = { it.id }) { a ->
+                ItemTile(a.title.orEmpty(), a.subtitle, a.thumbnail, round = true, size = Dimens.artistThumbnail) {
+                    nav.go(Screen.Artist(a.id))
+                }
+            }
+        }
+    }
+}
+
+/** The phone's Albums tab: the albums you've bookmarked. */
+@Composable
+fun AlbumsScreen(nav: Navigator) {
+    val albums = rememberBookmarks(Library.BOOKMARK_ALBUM)
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(Dimens.albumThumbnail + Dimens.alternativePadding * 2),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) { Header(str("albums", "Albums"), Modifier.padding(horizontal = 0.dp)) }
+        when {
+            albums == null -> item(span = { GridItemSpan(maxLineSpan) }) { Loading() }
+            albums.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
+                Message("Bookmark albums with the bookmark button on their page and they show up here.")
+            }
+            else -> items(albums, key = { it.id }) { a ->
+                ItemTile(a.title.orEmpty(), a.subtitle, a.thumbnail) { nav.go(Screen.Album(a.id)) }
+            }
+        }
+    }
+}

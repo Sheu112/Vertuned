@@ -12,6 +12,9 @@ plugins {
 dependencies {
     implementation(projects.providers.common)
     implementation(projects.providers.innertube)
+    implementation(projects.providers.lrclib)
+    implementation(projects.providers.kugou)
+    implementation(projects.providers.sponsorblock)
 
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.foundation:foundation:1.12.2")

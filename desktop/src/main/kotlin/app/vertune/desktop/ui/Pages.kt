@@ -2,6 +2,10 @@ package app.vertune.desktop.ui
 
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -73,6 +77,8 @@ import app.vitune.providers.innertube.utils.from
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import app.vertune.desktop.data.Settings
+import androidx.compose.ui.draw.rotate
 import kotlinx.coroutines.withContext
 
 // ---------------------------------------------------------------- Shared layout
@@ -160,6 +166,13 @@ fun AlbumScreen(browseId: String, nav: Navigator) {
             ThumbnailLayout(album.thumbnail?.size(1000)) {
                 item {
                     Header(album.title.orEmpty()) {
+                        BookmarkButton(
+                            Library.Bookmark(
+                                browseId, Library.BOOKMARK_ALBUM, album.title,
+                                album.authors?.joinToString("") { it.name.orEmpty() }?.ifBlank { null } ?: album.year,
+                                album.thumbnail?.size(544)
+                            )
+                        )
                         SecondaryTextButton("Enqueue", { tracks.forEach(PlayerController::addToQueue) }, enabled = tracks.isNotEmpty())
                     CacheButton(tracks)
                         Spacer(Modifier.weight(1f))
@@ -280,6 +293,21 @@ fun LocalPlaylistScreen(id: Long, nav: Navigator) {
     }
 }
 
+/** The phone's bookmark icon on album and artist pages; bookmarked ones show up in the Albums and Artists tabs. */
+@Composable
+private fun BookmarkButton(bookmark: Library.Bookmark) {
+    val version by Library.version.collectAsState()
+    val on by produceState(false, bookmark.id, version) {
+        value = withContext(Dispatchers.IO) { runCatching { Library.isBookmarked(bookmark.id) }.getOrDefault(false) }
+    }
+    AppIconButton(
+        if (on) "bookmark" else "bookmark_outline",
+        LocalPalette.current.accent,
+        { Library.setBookmarked(bookmark, !on) },
+        size = 18.dp
+    )
+}
+
 // ---------------------------------------------------------------- Artist
 
 @Composable
@@ -291,6 +319,7 @@ fun ArtistScreen(browseId: String, nav: Navigator) {
             ThumbnailLayout(artist.thumbnail?.size(1000), round = true) {
                 item {
                     Header(artist.name.orEmpty()) {
+                        BookmarkButton(Library.Bookmark(browseId, Library.BOOKMARK_ARTIST, artist.name, null, artist.thumbnail?.size(544)))
                         artist.subscribersCountText?.let {
                             BasicText(it, style = Type.xs.semiBold.color(LocalPalette.current.textSecondary))
                         }
@@ -409,12 +438,13 @@ private enum class Period(val label: String, val days: Long?) {
 fun TopScreen(nav: Navigator) {
     var period by remember { mutableStateOf(Period.All) }
     val since = period.days?.let { System.currentTimeMillis() - it * 24 * 60 * 60 * 1000 }
-    val top = rememberLibrary(period) { Library.top(TOP_COUNT, since) }
+    val topLength by Settings.topListLength.flow.collectAsState()
+    val top = rememberLibrary(period, topLength) { Library.top(topLength, since) }
     val total = rememberLibrary(period) { Library.totalListenedMs(since) } ?: 0L
     val byId = top?.associateBy { it.track.id }.orEmpty()
 
     BuiltInPage(
-        title = "My top 50",
+        title = str("format_my_top_playlist", "My top $topLength", topLength),
         tracks = top?.map { it.track },
         empty = "Listen to some music and your most played songs show up here.",
         nav = nav,
@@ -447,6 +477,8 @@ private fun PeriodChip(text: String, selected: Boolean, onClick: () -> Unit) {
 
 // ---------------------------------------------------------------- Search
 
+private const val MAX_HISTORY_SHOWN = 20
+
 private enum class SearchTab(val label: String) { Songs("Songs"), Albums("Albums"), Artists("Artists"), Playlists("Playlists") }
 
 /** Like the phone: a big text field where the title goes, suggestions while typing, results below. */
@@ -468,9 +500,18 @@ fun SearchScreen(initialQuery: String, nav: Navigator) {
         }
     }
 
+    val pauseHistory by Settings.pauseSearchHistory.flow.collectAsState()
+    val libraryVersion by Library.version.collectAsState()
+    val history by produceState(emptyList<String>(), text, query, pauseHistory, libraryVersion) {
+        value = if (pauseHistory || (query.isNotEmpty() && text == query)) emptyList()
+        else withContext(Dispatchers.IO) { runCatching { Library.searchHistory(text.trim()) }.getOrDefault(emptyList()) }
+    }
+    val scope = rememberCoroutineScope()
+
     fun submit(q: String) {
         val trimmed = q.trim()
         if (trimmed.isEmpty()) return
+        if (!Settings.pauseSearchHistory.value) scope.launch(Dispatchers.IO) { runCatching { Library.addSearch(trimmed) } }
         text = trimmed
         query = trimmed
         nav.replace(Screen.Search(trimmed))
@@ -517,9 +558,21 @@ fun SearchScreen(initialQuery: String, nav: Navigator) {
             }
         }
 
-        if (suggestions.isNotEmpty()) {
+        if (history.isNotEmpty() || suggestions.isNotEmpty()) {
             LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp)) {
-                itemsIndexed(suggestions) { _, s ->
+                itemsIndexed(history.take(MAX_HISTORY_SHOWN)) { _, h ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().hoverHighlight().clickable { submit(h) }.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+                    ) {
+                        AppIcon("time", palette.textDisabled, size = 18.dp)
+                        Spacer(Modifier.width(16.dp))
+                        BasicText(h, style = Type.s.color(palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        AppIconButton("close", palette.textDisabled, { scope.launch(Dispatchers.IO) { runCatching { Library.removeSearch(h) } } }, size = 16.dp)
+                        AppIconButton("arrow_forward", palette.textDisabled, { text = h }, Modifier.rotate(225f), size = 16.dp)
+                    }
+                }
+                itemsIndexed(suggestions.filter { it !in history }) { _, s ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().hoverHighlight().clickable { submit(s) }.padding(horizontal = 16.dp, vertical = 14.dp)
@@ -636,53 +689,85 @@ private fun <T : Innertube.Item> PagedList(
 
 // ---------------------------------------------------------------- Dialogs
 
+/** The phone's dialog buttons; the main one ("Done") sits in an accent-coloured pill. */
 @Composable
-private fun DialogFrame(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+fun DialogTextButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, primary: Boolean = false) {
+    val palette = LocalPalette.current
+    BasicText(
+        text,
+        style = Type.xs.medium.color(
+            when {
+                !enabled -> palette.textDisabled
+                primary -> palette.onAccent
+                else -> palette.text
+            }
+        ),
+        modifier = modifier
+            .clip(RoundedCornerShape(36.dp))
+            .background(if (primary) palette.accent else androidx.compose.ui.graphics.Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 16.dp)
+    )
+}
+
+/** The phone's DefaultDialog: a rounded background1 card. */
+@Composable
+fun DialogFrame(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier
-                .width(380.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .width(420.dp)
+                .clip(RoundedCornerShape(8.dp))
                 .background(LocalPalette.current.background1)
-                .padding(24.dp)
+                .padding(horizontal = 24.dp, vertical = 16.dp)
         ) { content() }
     }
 }
 
+/** The phone's TextFieldDialog: a centred text field with Cancel and a highlighted Done. */
 @Composable
-fun TextFieldDialog(title: String, hint: String, initial: String = "", onDismiss: () -> Unit, onDone: (String) -> Unit) {
+fun TextFieldDialog(
+    @Suppress("UNUSED_PARAMETER") title: String,
+    hint: String,
+    initial: String = "",
+    onDismiss: () -> Unit,
+    onDone: (String) -> Unit
+) {
     val palette = LocalPalette.current
     var text by remember { mutableStateOf(initial) }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(Unit) { delay(FOCUS_DELAY_MS); runCatching { focus.requestFocus() } }
     fun done() {
         if (text.isNotBlank()) {
-            onDone(text.trim())
             onDismiss()
+            onDone(text.trim())
         }
     }
     DialogFrame(onDismiss) {
-        BasicText(title, style = Type.s.semiBold.color(palette.text))
         BasicTextField(
             value = text,
             onValueChange = { text = it },
-            textStyle = Type.xs.medium.color(palette.text),
+            textStyle = Type.xs.semiBold.color(palette.text).copy(textAlign = TextAlign.Center),
             singleLine = true,
             cursorBrush = SolidColor(palette.text),
-            modifier = Modifier.fillMaxWidth().focusRequester(focus).onPreviewKeyEvent {
+            modifier = Modifier.fillMaxWidth().padding(16.dp).focusRequester(focus).onPreviewKeyEvent {
                 if (it.type == KeyEventType.KeyDown && it.key == Key.Enter) { done(); true } else false
             },
             decorationBox = { inner ->
-                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(palette.background0).padding(12.dp)) {
-                    if (text.isEmpty()) BasicText(hint, style = Type.xs.medium.color(palette.textDisabled))
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    if (text.isEmpty()) BasicText(
+                        hint,
+                        style = Type.xs.semiBold.color(palette.textSecondary).copy(textAlign = TextAlign.Center),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     inner()
                 }
             }
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End)) {
-            SecondaryTextButton("Cancel", onDismiss)
-            SecondaryTextButton("Done", ::done, enabled = text.isNotBlank())
+        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+            DialogTextButton(str("cancel", "Cancel"), onDismiss)
+            DialogTextButton(str("done", "Done"), ::done, primary = true)
         }
     }
 }
@@ -690,10 +775,46 @@ fun TextFieldDialog(title: String, hint: String, initial: String = "", onDismiss
 @Composable
 fun ConfirmDialog(text: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     DialogFrame(onDismiss) {
-        BasicText(text, style = Type.s.semiBold.color(LocalPalette.current.text))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End)) {
-            SecondaryTextButton("Cancel", onDismiss)
-            SecondaryTextButton("Confirm", { onConfirm(); onDismiss() })
+        BasicText(
+            text,
+            style = Type.xs.medium.color(LocalPalette.current.text).copy(textAlign = TextAlign.Center),
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        )
+        Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
+            DialogTextButton(str("cancel", "Cancel"), onDismiss)
+            DialogTextButton(str("confirm", "Confirm"), { onDismiss(); onConfirm() }, primary = true)
+        }
+    }
+}
+
+/** The phone's ValueSelectorDialog: a list with radio circles; picking one closes it. */
+@Composable
+fun <T> ValueSelectorDialog(title: String, selected: T, values: List<T>, label: @Composable (T) -> String, onDismiss: () -> Unit, onSelect: (T) -> Unit) {
+    val palette = LocalPalette.current
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.width(420.dp).clip(RoundedCornerShape(8.dp)).background(palette.background1).padding(vertical = 16.dp)
+        ) {
+            BasicText(title, style = Type.s.semiBold.color(palette.text), modifier = Modifier.padding(vertical = 8.dp, horizontal = 24.dp))
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                values.forEach { v ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxWidth().clickable { onDismiss(); onSelect(v) }.padding(vertical = 12.dp, horizontal = 24.dp)
+                    ) {
+                        if (v == selected) Box(
+                            Modifier.size(18.dp).background(palette.accent, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) { Box(Modifier.size(8.dp).background(palette.onAccent, CircleShape)) }
+                        else Box(Modifier.size(18.dp).border(1.dp, palette.textDisabled, CircleShape))
+                        BasicText(label(v), style = Type.xs.medium.color(palette.text))
+                    }
+                }
+            }
+            Box(Modifier.fillMaxWidth().padding(end = 24.dp), contentAlignment = Alignment.CenterEnd) {
+                DialogTextButton(str("cancel", "Cancel"), onDismiss)
+            }
         }
     }
 }
@@ -744,5 +865,5 @@ fun AddToPlaylistDialog(track: Track, onDismiss: () -> Unit) {
 }
 
 private const val MAX_PLAYLIST_PAGES = 10
-private const val TOP_COUNT = 50
 private const val SUGGESTION_DELAY_MS = 250L
+private const val FOCUS_DELAY_MS = 300L

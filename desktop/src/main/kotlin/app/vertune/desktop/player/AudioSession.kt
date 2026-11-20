@@ -14,6 +14,8 @@ class AudioSession(
     private val ffmpeg: String,
     private val stream: StreamResolver.Stream,
     val startMs: Long,
+    private val filter: String? = null,
+    private val speed: Float = 1f,
     private val volume: () -> Float
 ) {
     sealed interface Outcome {
@@ -47,7 +49,8 @@ class AudioSession(
     val playedMs: Long
         get() = line?.let { runCatching { it.microsecondPosition / 1000 }.getOrNull() } ?: lastPlayedMs
 
-    val positionMs: Long get() = startMs + playedMs
+    /** Where in the song we are. With a playback speed, heard time covers more of the song. */
+    val positionMs: Long get() = startMs + (playedMs * speed).toLong()
 
     private var consumed = false
 
@@ -79,7 +82,9 @@ class AudioSession(
                 add(otherHeaders.entries.joinToString("") { "${it.key}: ${it.value}\r\n" })
             }
             if (startMs > 0) addAll(listOf("-ss", "%.3f".format(java.util.Locale.ROOT, startMs / 1000.0)))
-            addAll(listOf("-i", stream.url, "-vn", "-f", "s16le", "-acodec", "pcm_s16le"))
+            addAll(listOf("-i", stream.url, "-vn"))
+            if (filter != null) addAll(listOf("-af", filter))
+            addAll(listOf("-f", "s16le", "-acodec", "pcm_s16le"))
             addAll(listOf("-ac", CHANNELS.toString(), "-ar", SAMPLE_RATE.toString(), "pipe:1"))
         }
 
@@ -145,7 +150,7 @@ class AudioSession(
             if (!stopped) out.drain()
 
             val expected = stream.durationMs
-            if (expected != null && positionMs < expected - TRUNCATED_TOLERANCE_MS && !stopped) {
+            if (expected != null && filter?.contains("silenceremove") != true && positionMs < expected - TRUNCATED_TOLERANCE_MS && !stopped) {
                 return Outcome.Failed("The stream ended early")
             }
             return if (stopped) Outcome.Stopped else Outcome.Completed

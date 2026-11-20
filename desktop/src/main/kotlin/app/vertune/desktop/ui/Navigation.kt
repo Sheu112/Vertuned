@@ -7,11 +7,13 @@ import androidx.compose.runtime.setValue
 import app.vertune.desktop.data.Track
 
 /** The phone app's home tabs, shown on the vertical rail. */
-enum class HomeTab(val title: String, val icon: String) {
-    QuickPicks("Quick picks", "sparkles"),
-    Discover("Discover", "globe"),
-    Songs("Songs", "musical_notes"),
-    Playlists("Playlists", "playlist")
+enum class HomeTab(val key: String, val title: String, val icon: String) {
+    QuickPicks("quick_picks", "Quick picks", "sparkles"),
+    Discover("discover", "Discover", "globe"),
+    Songs("songs", "Songs", "musical_notes"),
+    Playlists("playlists", "Playlists", "playlist"),
+    Artists("artists", "Artists", "person"),
+    Albums("albums", "Albums", "disc")
 }
 
 sealed interface Screen {
@@ -40,6 +42,13 @@ class Navigator {
     var homeTab by mutableStateOf(HomeTab.QuickPicks)
         private set
 
+    /** The settings tab shown on the rail while Settings is open. */
+    var settingsTab by mutableStateOf(SettingsTab.Appearance)
+
+    /** True when the last move went back (for the phone's pop animation). */
+    var popping by mutableStateOf(false)
+        private set
+
     var showQueue by mutableStateOf(false)
 
     /** The full "now playing" screen, opened from the player bar. */
@@ -49,21 +58,27 @@ class Navigator {
     var addToPlaylist by mutableStateOf<Track?>(null)
 
     fun go(screen: Screen) {
-        if (stack.last() != screen) stack.add(screen)
+        if (stack.last() != screen) {
+            popping = false
+            stack.add(screen)
+        }
     }
 
     fun home(tab: HomeTab) {
+        popping = true
         homeTab = tab
         stack.clear()
         stack.add(Screen.Home(tab))
     }
 
     fun root(screen: Screen) {
+        popping = true
         stack.clear()
         stack.add(screen)
     }
 
     fun back() {
+        popping = true
         if (stack.size > 1) stack.removeAt(stack.lastIndex)
     }
 

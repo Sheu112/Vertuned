@@ -64,6 +64,24 @@ object Library {
                     )
                     """.trimIndent()
                 )
+                st.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS Lyrics (songId TEXT PRIMARY KEY NOT NULL, fixed TEXT, synced TEXT)"
+                )
+                st.executeUpdate(
+                    "CREATE TABLE IF NOT EXISTS SearchQuery (query TEXT PRIMARY KEY NOT NULL, at INTEGER NOT NULL)"
+                )
+                st.executeUpdate(
+                    """
+                    CREATE TABLE IF NOT EXISTS Bookmark (
+                        id TEXT PRIMARY KEY NOT NULL,
+                        kind TEXT NOT NULL,
+                        title TEXT,
+                        subtitle TEXT,
+                        thumbnail TEXT,
+                        bookmarkedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS Event_songId ON Event(songId)")
                 st.executeUpdate("CREATE INDEX IF NOT EXISTS Event_timestamp ON Event(timestamp)")
             }
@@ -320,6 +338,146 @@ object Library {
         """.trimIndent()
     )
 
+    // ---- Lyrics (saved, like the phone, so they load instantly next time)
+
+    data class SavedLyrics(val fixed: String?, val synced: String?)
+
+    @Synchronized
+    fun lyrics(songId: String): SavedLyrics? =
+        connection.prepareStatement("SELECT fixed, synced FROM Lyrics WHERE songId = ?").use { st ->
+            st.setString(1, songId)
+            st.executeQuery().use { rs -> if (rs.next()) SavedLyrics(rs.getString(1), rs.getString(2)) else null }
+        }
+
+    @Synchronized
+    fun saveLyrics(songId: String, fixed: String?, synced: String?) {
+        connection.prepareStatement(
+            "INSERT INTO Lyrics (songId, fixed, synced) VALUES (?, ?, ?) " +
+                "ON CONFLICT(songId) DO UPDATE SET fixed = excluded.fixed, synced = excluded.synced"
+        ).use { st ->
+            st.setString(1, songId)
+            st.setString(2, fixed)
+            st.setString(3, synced)
+            st.executeUpdate()
+        }
+    }
+
+    // ---- Search history (the phone's search shows past searches)
+
+    @Synchronized
+    fun searchHistory(prefix: String = ""): List<String> =
+        connection.prepareStatement("SELECT query FROM SearchQuery WHERE query LIKE ? ORDER BY at DESC LIMIT 50").use { st ->
+            st.setString(1, "${prefix.replace("%", "")}%")
+            st.executeQuery().use { rs -> buildList { while (rs.next()) add(rs.getString(1)) } }
+        }
+
+    @Synchronized
+    fun addSearch(query: String) {
+        connection.prepareStatement(
+            "INSERT INTO SearchQuery (query, at) VALUES (?, ?) ON CONFLICT(query) DO UPDATE SET at = excluded.at"
+        ).use { st ->
+            st.setString(1, query)
+            st.setLong(2, System.currentTimeMillis())
+            st.executeUpdate()
+        }
+    }
+
+    @Synchronized
+    fun removeSearch(query: String) {
+        connection.prepareStatement("DELETE FROM SearchQuery WHERE query = ?").use { st ->
+            st.setString(1, query)
+            st.executeUpdate()
+        }
+        changed()
+    }
+
+    @Synchronized
+    fun searchHistoryCount(): Int =
+        connection.createStatement().use { st -> st.executeQuery("SELECT COUNT(*) FROM SearchQuery").use { it.next(); it.getInt(1) } }
+
+    @Synchronized
+    fun clearSearchHistory() {
+        connection.createStatement().use { it.executeUpdate("DELETE FROM SearchQuery") }
+        changed()
+    }
+
+    // ---- Bookmarked albums and artists (the phone's Albums and Artists tabs)
+
+    const val BOOKMARK_ALBUM = "album"
+    const val BOOKMARK_ARTIST = "artist"
+
+    data class Bookmark(val id: String, val kind: String, val title: String?, val subtitle: String?, val thumbnail: String?)
+
+    @Synchronized
+    fun bookmarks(kind: String): List<Bookmark> =
+        connection.prepareStatement("SELECT id, kind, title, subtitle, thumbnail FROM Bookmark WHERE kind = ? ORDER BY bookmarkedAt DESC").use { st ->
+            st.setString(1, kind)
+            st.executeQuery().use { rs ->
+                buildList { while (rs.next()) add(Bookmark(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5))) }
+            }
+        }
+
+    @Synchronized
+    fun isBookmarked(id: String): Boolean =
+        connection.prepareStatement("SELECT 1 FROM Bookmark WHERE id = ?").use { st ->
+            st.setString(1, id)
+            st.executeQuery().use { it.next() }
+        }
+
+    @Synchronized
+    fun setBookmarked(b: Bookmark, on: Boolean) {
+        if (on) connection.prepareStatement(
+            "INSERT OR REPLACE INTO Bookmark (id, kind, title, subtitle, thumbnail, bookmarkedAt) VALUES (?, ?, ?, ?, ?, ?)"
+        ).use { st ->
+            st.setString(1, b.id); st.setString(2, b.kind); st.setString(3, b.title)
+            st.setString(4, b.subtitle); st.setString(5, b.thumbnail); st.setLong(6, System.currentTimeMillis())
+            st.executeUpdate()
+        } else connection.prepareStatement("DELETE FROM Bookmark WHERE id = ?").use { st ->
+            st.setString(1, b.id)
+            st.executeUpdate()
+        }
+        changed()
+    }
+
+    // ---- Database settings
+
+    @Synchronized
+    fun eventCount(): Int =
+        connection.createStatement().use { st -> st.executeQuery("SELECT COUNT(*) FROM Event").use { it.next(); it.getInt(1) } }
+
+    /** The phone's "Reset quick picks": deletes the listening history that quick picks come from. */
+    @Synchronized
+    fun clearEvents() {
+        connection.createStatement().use { it.executeUpdate("DELETE FROM Event") }
+        changed()
+    }
+
+    /** Copies the whole library to [target] (Settings → Database → Backup). */
+    @Synchronized
+    fun backup(target: File) {
+        target.delete()
+        connection.createStatement().use { it.executeUpdate("VACUUM INTO '${target.absolutePath.replace("'", "''")}'") }
+    }
+
+    /** Replaces the library with a backup made by [backup]. */
+    @Synchronized
+    fun restore(source: File) {
+        connection.createStatement().use { st ->
+            st.executeUpdate("ATTACH DATABASE '${source.absolutePath.replace("'", "''")}' AS backup")
+            try {
+                for (table in listOf("Song", "Event", "Playlist", "SongPlaylistMap", "Lyrics", "SearchQuery", "Bookmark")) {
+                    val exists = st.executeQuery("SELECT COUNT(*) FROM backup.sqlite_master WHERE name = '$table'").use { it.next() && it.getInt(1) > 0 }
+                    if (!exists) continue
+                    st.executeUpdate("DELETE FROM $table")
+                    st.executeUpdate("INSERT INTO $table SELECT * FROM backup.$table")
+                }
+            } finally {
+                st.executeUpdate("DETACH DATABASE backup")
+                changed()
+            }
+        }
+    }
+
     /** The saved songs with these ids, in the order given. */
     @Synchronized
     fun songsWithIds(ids: List<String>): List<Track> {
@@ -403,6 +561,30 @@ object Library {
                                 "WHERE m.playlistId = $phoneId AND m.songId IN (SELECT id FROM Song)"
                         )
                     }
+                }
+                fun phoneHas(table: String) =
+                    st.executeQuery("SELECT COUNT(*) FROM phone.sqlite_master WHERE name = '$table'").use { it.next() && it.getInt(1) > 0 }
+                if (phoneHas("Lyrics")) runCatching {
+                    st.executeUpdate(
+                        "INSERT OR IGNORE INTO Lyrics (songId, fixed, synced) SELECT songId, fixed, synced FROM phone.Lyrics"
+                    )
+                }
+                if (phoneHas("SearchQuery")) runCatching {
+                    st.executeUpdate(
+                        "INSERT OR IGNORE INTO SearchQuery (query, at) SELECT query, id FROM phone.SearchQuery"
+                    )
+                }
+                if (hasAlbums) runCatching {
+                    st.executeUpdate(
+                        "INSERT OR IGNORE INTO Bookmark (id, kind, title, subtitle, thumbnail, bookmarkedAt) " +
+                            "SELECT id, 'album', title, authorsText, thumbnailUrl, bookmarkedAt FROM phone.Album WHERE bookmarkedAt IS NOT NULL"
+                    )
+                }
+                if (phoneHas("Artist")) runCatching {
+                    st.executeUpdate(
+                        "INSERT OR IGNORE INTO Bookmark (id, kind, title, subtitle, thumbnail, bookmarkedAt) " +
+                            "SELECT id, 'artist', name, NULL, thumbnailUrl, bookmarkedAt FROM phone.Artist WHERE bookmarkedAt IS NOT NULL"
+                    )
                 }
                 return songs to events
             } finally {

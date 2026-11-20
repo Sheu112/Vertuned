@@ -52,8 +52,63 @@ object PlayerController {
     private val mutableError = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = mutableError.asStateFlow()
 
-    private val mutableRepeat = MutableStateFlow(Repeat.Off)
+    private val mutableRepeat = MutableStateFlow(repeatFromSettings())
     val repeat: StateFlow<Repeat> = mutableRepeat.asStateFlow()
+
+    private fun repeatFromSettings() = when {
+        Settings.trackLoop.value -> Repeat.One
+        Settings.queueLoop.value -> Repeat.All
+        else -> Repeat.Off
+    }
+
+    /** The phone's "infinite" button: repeat the current song. */
+    fun setTrackLoop(on: Boolean) {
+        Settings.trackLoop.value = on
+        mutableRepeat.value = repeatFromSettings()
+    }
+
+    /** The phone's "Queue loop": start the queue again after the last song. */
+    fun setQueueLoop(on: Boolean) {
+        Settings.queueLoop.value = on
+        mutableRepeat.value = repeatFromSettings()
+    }
+
+    /** Asks the window to open the full player (Settings → "Open player automatically"). */
+    val openPlayerRequests = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    // ---- Sleep timer (from the phone's song menu)
+
+    private val mutableSleepAt = MutableStateFlow<Long?>(null)
+
+    /** When playback will stop, or null. */
+    val sleepAt: StateFlow<Long?> = mutableSleepAt.asStateFlow()
+    private val mutableSleepAtEnd = MutableStateFlow(false)
+    val sleepAtEndOfSong: StateFlow<Boolean> = mutableSleepAtEnd.asStateFlow()
+    private var sleepJob: Job? = null
+
+    fun setSleepTimer(minutes: Int?) {
+        sleepJob?.cancel()
+        mutableSleepAtEnd.value = false
+        mutableSleepAt.value = null
+        if (minutes == null) return
+        val at = System.currentTimeMillis() + minutes * 60_000L
+        mutableSleepAt.value = at
+        sleepJob = scope.launch {
+            delay(at - System.currentTimeMillis())
+            setPlaying(false)
+            mutableSleepAt.value = null
+        }
+    }
+
+    fun sleepAtEndOfSong() {
+        setSleepTimer(null)
+        mutableSleepAtEnd.value = true
+    }
+
+    /** Restarts the song where it is, so new audio settings (speed, effects) are used. */
+    fun applyAudioSettings() {
+        if (mutableCurrent.value != null && session != null) seekTo(mutablePosition.value)
+    }
 
     private val ffmpeg by lazy { Paths.tool("ffmpeg") }
 
@@ -77,6 +132,60 @@ object PlayerController {
                 delay(POSITION_TICK_MS)
             }
         }
+        restoreQueue()
+        // "Persistent queue": remember the queue so it's still there next time the app opens.
+        scope.launch {
+            kotlinx.coroutines.flow.combine(mutableQueue, mutableIndex) { q, i -> q to i }
+                .collect { saveQueue() }
+        }
+    }
+
+    private fun saveQueue() {
+        if (!Settings.persistentQueue.value) {
+            if (Settings.savedQueue.value.isNotEmpty()) Settings.savedQueue.value = ""
+            return
+        }
+        val q = mutableQueue.value
+        val json = org.json.JSONObject()
+            .put("index", mutableIndex.value)
+            .put("position", mutablePosition.value)
+            .put("tracks", org.json.JSONArray(q.take(MAX_SAVED_QUEUE).map { t ->
+                org.json.JSONObject()
+                    .put("id", t.id).put("title", t.title).put("artists", t.artists).put("artistId", t.artistId)
+                    .put("album", t.album).put("albumId", t.albumId).put("thumbnail", t.thumbnail)
+                    .put("durationText", t.durationText).put("explicit", t.explicit)
+            }))
+        Settings.savedQueue.value = json.toString()
+    }
+
+    private fun restoreQueue() {
+        if (!Settings.persistentQueue.value) return
+        runCatching {
+            val json = org.json.JSONObject(Settings.savedQueue.value.ifBlank { return })
+            val arr = json.getJSONArray("tracks")
+            val tracks = (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                Track(
+                    id = o.getString("id"),
+                    title = o.getString("title"),
+                    artists = o.optString("artists").ifBlank { null },
+                    artistId = o.optString("artistId").ifBlank { null },
+                    album = o.optString("album").ifBlank { null },
+                    albumId = o.optString("albumId").ifBlank { null },
+                    thumbnail = o.optString("thumbnail").ifBlank { null },
+                    durationText = o.optString("durationText").ifBlank { null },
+                    explicit = o.optBoolean("explicit")
+                )
+            }
+            val i = json.optInt("index", 0)
+            if (tracks.isNotEmpty() && i in tracks.indices) {
+                mutableQueue.value = tracks
+                mutableIndex.value = i
+                mutableCurrent.value = tracks[i]
+                mutablePosition.value = json.optLong("position", 0)
+                mutableDuration.value = tracks[i].durationMs
+            }
+        }
     }
 
     // ---- Queue commands ----
@@ -90,6 +199,7 @@ object PlayerController {
         mutableIsPlaying.value = true
         playAt(startIndex.coerceIn(tracks.indices))
         if (radio) startRadio(tracks[startIndex.coerceIn(tracks.indices)])
+        if (Settings.autoOpenPlayer.value) openPlayerRequests.tryEmit(Unit)
     }
 
     /** Plays one song, followed by a radio of similar songs, like the phone app does. */
@@ -172,7 +282,12 @@ object PlayerController {
     }
 
     fun cycleRepeat() {
-        mutableRepeat.value = Repeat.entries[(mutableRepeat.value.ordinal + 1) % Repeat.entries.size]
+        when (mutableRepeat.value) {
+            Repeat.Off -> { Settings.trackLoop.value = false; Settings.queueLoop.value = true }
+            Repeat.All -> Settings.trackLoop.value = true
+            Repeat.One -> { Settings.trackLoop.value = false; Settings.queueLoop.value = false }
+        }
+        mutableRepeat.value = repeatFromSettings()
     }
 
     fun shuffleUpcoming() {
@@ -184,6 +299,7 @@ object PlayerController {
 
     /** Saves the listening time of the current song. Call before quitting. */
     fun shutdown() {
+        runCatching { saveQueue() }
         playJob?.cancel()
         session?.let { old ->
             old.stop()
@@ -217,7 +333,7 @@ object PlayerController {
                 val local = SongCache.cached(track.id)
                 val stream = if (local != null) StreamResolver.Stream(
                     url = local.absolutePath,
-                    durationMs = track.durationMs.takeIf { it > 0 },
+                    durationMs = SongCache.durationMs(track.id, ffmpeg) ?: track.durationMs.takeIf { it > 0 },
                     headers = emptyMap()
                 ) else try {
                     StreamResolver.resolve(track.id).also { SongCache.save(track, it) }
@@ -236,7 +352,8 @@ object PlayerController {
                     mutableIsPlaying.value = false
                     return@launch
                 }
-                val s = AudioSession(ff, stream, position) { Settings.volume.value }
+                val s = AudioSession(ff, stream, position, AudioEffects.filter(), AudioEffects.speed()) { Settings.volume.value }
+                if (Settings.sponsorBlock.value && local == null) watchSponsorBlock(track.id, s)
                 s.paused = !mutableIsPlaying.value
                 session = s
                 listenStartedAt = System.currentTimeMillis()
@@ -290,6 +407,12 @@ object PlayerController {
     }
 
     private fun onTrackEnded() {
+        if (mutableSleepAtEnd.value) {
+            mutableSleepAtEnd.value = false
+            mutableIsPlaying.value = false
+            mutablePosition.value = 0
+            return
+        }
         when {
             mutableRepeat.value == Repeat.One -> scope.launch { startCurrent(0) }
             mutableIndex.value + 1 < mutableQueue.value.size || mutableRepeat.value == Repeat.All ->
@@ -304,9 +427,28 @@ object PlayerController {
 
     private suspend fun failAndSkip(message: String) {
         mutableError.value = message
+        // Like the phone: skip to the next song only with "Skip on error" turned on.
+        if (!Settings.skipOnError.value) {
+            mutableIsPlaying.value = false
+            return
+        }
         delay(SKIP_AFTER_ERROR_MS)
         if (mutableIndex.value + 1 < mutableQueue.value.size) next()
         else mutableIsPlaying.value = false
+    }
+
+    private fun watchSponsorBlock(id: String, s: AudioSession) {
+        scope.launch(Dispatchers.IO) {
+            val segments = SponsorSegments.get(id)
+            while (isActive && session === s) {
+                val pos = s.positionMs
+                segments.firstOrNull { pos in it.first until it.last - SPONSOR_MARGIN_MS }?.let { seg ->
+                    if (session === s) seekTo(seg.last)
+                    return@launch
+                }
+                delay(POSITION_TICK_MS)
+            }
+        }
     }
 
     @Synchronized
@@ -320,7 +462,9 @@ object PlayerController {
         val previous = listenTrack
         if (previous != null && previous.id != next?.id) {
             val ms = listenMs
-            scope.launch(Dispatchers.IO) { runCatching { Library.addListen(previous, ms) } }
+            if (!Settings.pausePlaybackHistory.value && !Settings.pausePlaytime.value) {
+                scope.launch(Dispatchers.IO) { runCatching { Library.addListen(previous, ms) } }
+            }
             listenMs = 0
         }
         if (previous?.id != next?.id) {
@@ -391,4 +535,6 @@ object PlayerController {
     private const val SKIP_AFTER_ERROR_MS = 2_500L
     private const val PREFETCH_DELAY_MS = 3_000L
     private const val RADIO_PREFETCH_WHEN_LEFT = 3
+    private const val SPONSOR_MARGIN_MS = 500L
+    private const val MAX_SAVED_QUEUE = 500
 }
