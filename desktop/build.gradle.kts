@@ -63,6 +63,13 @@ compose.desktop {
                 iconFile.set(project.file("icons/vertune.icns"))
                 appCategory = "public.app-category.music"
                 dockName = "Vertune"
+                // Lets the window chrome follow dark mode instead of always being light.
+                infoPlist {
+                    extraKeysRawXml = """
+                        <key>NSRequiresAquaSystemAppearance</key>
+                        <false/>
+                    """.trimIndent()
+                }
             }
         }
 

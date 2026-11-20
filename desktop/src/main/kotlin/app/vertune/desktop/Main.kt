@@ -1,6 +1,18 @@
 package app.vertune.desktop
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.window.WindowDraggableArea
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import app.vertune.desktop.ui.MiniPlayerWindow
+import app.vertune.desktop.ui.TITLE_BAR_HEIGHT
+import app.vertune.desktop.ui.blendTitleBar
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
@@ -50,6 +62,8 @@ fun main() {
     println("${AppInfo.NAME} ${AppInfo.VERSION} starting, Java ${System.getProperty("java.version")}, " +
         "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}")
     System.setProperty("apple.awt.application.name", AppInfo.NAME)
+    // Follow the Mac's light/dark mode for window chrome instead of always using light.
+    System.setProperty("apple.awt.application.appearance", "system")
 
     SingletonImageLoader.setSafe { context ->
         ImageLoader.Builder(context)
@@ -68,6 +82,7 @@ fun main() {
     application {
         val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
         val nav = remember { Navigator() }
+        var mainWindow by remember { mutableStateOf<java.awt.Window?>(null) }
         val logo = remember {
             // Falls back to an empty image rather than crashing if the icon is ever missing.
             val image = Navigator::class.java.getResource("/vertune.png")?.let(ImageIO::read)
@@ -97,8 +112,21 @@ fun main() {
                 }
             }
         ) {
-            window.minimumSize = java.awt.Dimension(MIN_WIDTH, MIN_HEIGHT)
-            App(nav, logo)
+            remember {
+                window.minimumSize = java.awt.Dimension(MIN_WIDTH, MIN_HEIGHT)
+                window.blendTitleBar()
+                mainWindow = window
+            }
+            Box(Modifier.fillMaxSize()) {
+                App(nav, logo)
+                // The see-through title bar still moves the window when dragged.
+                WindowDraggableArea(Modifier.fillMaxWidth().height(TITLE_BAR_HEIGHT)) { Box(Modifier.fillMaxSize()) }
+            }
+        }
+
+        MiniPlayerWindow(nav, logo) {
+            windowState.isMinimized = false
+            mainWindow?.toFront()
         }
     }
 }

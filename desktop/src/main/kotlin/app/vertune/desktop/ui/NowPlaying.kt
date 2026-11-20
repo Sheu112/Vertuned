@@ -98,7 +98,7 @@ private fun NowPlayingContent(nav: Navigator) {
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 AppIconButton(
                     "chevron_down", palette.text, { nav.showPlayer = false },
-                    Modifier.padding(start = 16.dp, top = 16.dp)
+                    Modifier.padding(start = 16.dp, top = TITLE_BAR_HEIGHT + 8.dp)
                 )
                 Row(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 48.dp, vertical = 24.dp)) {
                     BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
@@ -439,6 +439,7 @@ private fun PlayerMenuButton(t: Track, nav: Navigator, modifier: Modifier) {
             MenuItem(str("add_to_playlist", "Add to playlist"), "add") { menu = false; nav.addToPlaylist = t }
             MenuItem(str("playback_settings", "Playback settings"), "speed") { menu = false; speedDialog = true }
             MenuItem(str("sleep_timer", "Sleep timer"), "alarm") { menu = false; sleepDialog = true }
+            MenuItem(str("pip", "Picture-in-picture"), "expand") { menu = false; nav.showMiniPlayer = true }
             t.albumId?.let { id ->
                 MenuItem(str("go_to_album", "Go to album"), "disc") { menu = false; nav.showPlayer = false; nav.go(Screen.Album(id)) }
             }

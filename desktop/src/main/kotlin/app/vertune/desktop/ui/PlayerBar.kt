@@ -164,6 +164,12 @@ fun PlayerBar(nav: Navigator) {
                     modifier = Modifier.width(96.dp)
                 )
                 AppIconButton(
+                    "expand",
+                    if (nav.showMiniPlayer) palette.accent else palette.textSecondary,
+                    { nav.showMiniPlayer = !nav.showMiniPlayer },
+                    size = 18.dp
+                )
+                AppIconButton(
                     "playlist",
                     if (nav.showQueue) palette.accent else palette.textSecondary,
                     { nav.showQueue = !nav.showQueue },
@@ -225,7 +231,7 @@ fun QueuePanel(nav: Navigator) {
 
     Column(
         Modifier
-            .padding(top = 16.dp, end = 12.dp, bottom = 12.dp)
+            .padding(top = TITLE_BAR_HEIGHT, end = 12.dp, bottom = 12.dp)
             .width(340.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(12.dp))

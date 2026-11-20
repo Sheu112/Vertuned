@@ -54,6 +54,11 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import app.vertune.desktop.player.PlayerController
+import app.vertune.desktop.data.Settings
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 
 @Composable
 fun App(nav: Navigator, @Suppress("UNUSED_PARAMETER") logo: Painter) {
@@ -180,6 +185,11 @@ private fun Rail(nav: Navigator) {
     val screen = nav.current
     val inSettings = screen == Screen.Settings
 
+    val hiddenSetting by Settings.hiddenHomeTabs.flow.collectAsState()
+    val hidden = hiddenSetting.split(',').filter { it.isNotBlank() }.toSet()
+    var editing by remember { mutableStateOf(false) }
+    if (editing) TabsDialog(hidden) { editing = false }
+
     val tabs = if (inSettings) SettingsTab.entries.map { RailTab(str(it.key, it.fallback), it.icon) }
     else HomeTab.entries.map { RailTab(str(it.key, it.title), it.icon) }
     val selected = when {
@@ -211,16 +221,22 @@ private fun Rail(nav: Navigator) {
         ) {
             val transition = updateTransition(selected)
             tabs.forEachIndexed { index, tab ->
+                val visible = inSettings || index == selected || HomeTab.entries[index].name !in hidden
+                AnimatedVisibility(visible) {
                 val dotAlpha by transition.animateFloat { if (it == index) 1f else 0f }
                 val textColor by transition.animateColor { if (it == index) palette.text else palette.textDisabled }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clip(RoundedCornerShape(24.dp))
-                        .clickable {
-                            if (inSettings) nav.settingsTab = SettingsTab.entries[index]
-                            else nav.home(HomeTab.entries[index])
-                        }
+                        .combinedClickable(
+                            onClick = {
+                                if (inSettings) nav.settingsTab = SettingsTab.entries[index]
+                                else nav.home(HomeTab.entries[index])
+                            },
+                            // Like the phone: long-press a tab to choose which tabs are shown.
+                            onLongClick = { if (!inSettings) editing = true }
+                        )
                         .padding(horizontal = 8.dp)
                 ) {
                     AppIcon(
@@ -246,6 +262,7 @@ private fun Rail(nav: Navigator) {
                             .padding(horizontal = 16.dp)
                     )
                 }
+                }
             }
         }
         AppIconButton(
@@ -254,6 +271,28 @@ private fun Rail(nav: Navigator) {
             { if (screen !is Screen.Search) nav.go(Screen.Search()) },
             Modifier.padding(bottom = 16.dp)
         )
+    }
+}
+
+/** The phone's tab editor: a switch for each home tab. At least one tab always stays shown. */
+@Composable
+private fun TabsDialog(hidden: Set<String>, onDismiss: () -> Unit) {
+    DialogFrame(onDismiss) {
+        BasicText(
+            str("tabs", "Tabs"),
+            style = Type.s.semiBold.color(LocalPalette.current.text).copy(textAlign = TextAlign.Center),
+            modifier = Modifier.fillMaxWidth()
+        )
+        HomeTab.entries.forEach { tab ->
+            val shown = tab.name !in hidden
+            SwitchSettingsEntry(
+                str(tab.key, tab.title), null, shown,
+                isEnabled = !shown || hidden.size < HomeTab.entries.size - 1
+            ) { on ->
+                val next = if (on) hidden - tab.name else hidden + tab.name
+                if (next.size < HomeTab.entries.size) Settings.hiddenHomeTabs.value = next.joinToString(",")
+            }
+        }
     }
 }
 

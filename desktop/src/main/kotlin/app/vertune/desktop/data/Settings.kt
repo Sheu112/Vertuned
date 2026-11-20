@@ -135,4 +135,7 @@ object Settings {
     // ---- UI state
 
     val playlistsAsGrid = boolean("ui.playlistsAsGrid", true)
+
+    /** Home tabs hidden from the rail (long-press a tab to change), as comma-separated names. */
+    val hiddenHomeTabs = string("ui.hiddenHomeTabs")
 }

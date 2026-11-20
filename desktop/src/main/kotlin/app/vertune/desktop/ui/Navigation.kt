@@ -51,6 +51,9 @@ class Navigator {
 
     var showQueue by mutableStateOf(false)
 
+    /** The small always-on-top player window. */
+    var showMiniPlayer by mutableStateOf(false)
+
     /** The full "now playing" screen, opened from the player bar. */
     var showPlayer by mutableStateOf(false)
 
