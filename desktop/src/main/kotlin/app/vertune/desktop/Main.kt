@@ -69,7 +69,10 @@ fun main() {
         val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
         val nav = remember { Navigator() }
         val logo = remember {
-            BitmapPainter(ImageIO.read(Navigator::class.java.getResource("/vertune.png")).toComposeImageBitmap())
+            // Falls back to an empty image rather than crashing if the icon is ever missing.
+            val image = Navigator::class.java.getResource("/vertune.png")?.let(ImageIO::read)
+                ?: java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+            BitmapPainter(image.toComposeImageBitmap())
         }
 
         Window(

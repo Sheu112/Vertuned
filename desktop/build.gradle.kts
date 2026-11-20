@@ -38,6 +38,7 @@ kotlin {
 compose.desktop {
     application {
         mainClass = "app.vertune.desktop.MainKt"
+        jvmArgs += listOf("--enable-native-access=ALL-UNNAMED")
 
         // yt-dlp, ffmpeg and quickjs are downloaded into this folder by CI (see build.yml)
         // and shipped inside the app bundle.
