@@ -150,8 +150,12 @@ private fun CacheButton(tracks: List<Track>) {
             androidx.compose.material3.CircularProgressIndicator(color = palette.text, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
             BasicText("$saved/${ids.size} saved", style = Type.xxs.medium.color(palette.textSecondary))
         }
-        saved < ids.size -> HeaderIconButton("download", { SongCache.precacheAll(tracks) }, selected = true)
-        else -> AppIcon("download", palette.textDisabled, size = 18.dp, modifier = Modifier.padding(8.dp))
+        saved < ids.size -> HeaderIconButton("download", {
+            SongCache.precacheAll(tracks)
+            app.vertune.desktop.player.LyricsLoader.prefetchAll(tracks)
+        }, selected = true)
+        // Everything's saved already: a lyrics button saves any missing lyrics instead
+        else -> HeaderIconButton("text", { app.vertune.desktop.player.LyricsLoader.prefetchAll(tracks) })
     }
 }
 

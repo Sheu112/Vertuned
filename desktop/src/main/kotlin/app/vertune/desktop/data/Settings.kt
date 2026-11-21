@@ -98,6 +98,11 @@ object Settings {
     val showRemaining = boolean("player.showRemaining", false)
     val showLyrics = boolean("player.showLyrics", false)
     val showSyncedLyrics = boolean("player.showSyncedLyrics", false)
+    val showWordLyrics = boolean("player.showWordLyrics", true)
+    /** Synced lyrics keep the current line in view (true) or can be scrolled freely (false). */
+    val lyricsFollowLine = boolean("player.lyricsFollowLine", true)
+    /** Lyrics text size in points (picked in the lyrics menu). */
+    val lyricsTextSize = int("player.lyricsTextSize", 16)
     val persistentQueue = boolean("player.persistentQueue", true)
     val skipOnError = boolean("player.skipOnError", false)
     val skipSilence = boolean("player.skipSilence", false)

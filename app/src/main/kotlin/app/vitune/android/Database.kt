@@ -40,6 +40,7 @@ import app.vitune.android.DatabaseInitializer.From10To11Migration
 import app.vitune.android.DatabaseInitializer.From14To15Migration
 import app.vitune.android.DatabaseInitializer.From22To23Migration
 import app.vitune.android.DatabaseInitializer.From23To24Migration
+import app.vitune.android.DatabaseInitializer.From31To32Migration
 import app.vitune.android.DatabaseInitializer.From8To9Migration
 import app.vitune.android.models.Album
 import app.vitune.android.models.Artist
@@ -90,7 +91,8 @@ object DatabaseDependency {
             From10To11Migration(),
             From14To15Migration(),
             From22To23Migration(),
-            From23To24Migration()
+            From23To24Migration(),
+            From31To32Migration()
         )
         .build()
 
@@ -850,7 +852,7 @@ interface DatabaseAccessor {
         PipedSession::class
     ],
     views = [SortedSongPlaylistMap::class],
-    version = 30,
+    version = 32,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -877,7 +879,8 @@ interface DatabaseAccessor {
         AutoMigration(from = 26, to = 27),
         AutoMigration(from = 27, to = 28),
         AutoMigration(from = 28, to = 29),
-        AutoMigration(from = 29, to = 30)
+        AutoMigration(from = 29, to = 30),
+        AutoMigration(from = 30, to = 31)
     ]
 )
 @TypeConverters(Converters::class)
@@ -1116,6 +1119,12 @@ abstract class DatabaseInitializer protected constructor() : RoomDatabase() {
     class From23To24Migration : Migration(23, 24) {
         override fun migrate(db: SupportSQLiteDatabase) =
             db.execSQL("ALTER TABLE Song ADD COLUMN loudnessBoost REAL")
+    }
+
+    // Per-song lyrics mode (word-by-word / line-by-line / unsynchronized)
+    class From31To32Migration : Migration(31, 32) {
+        override fun migrate(db: SupportSQLiteDatabase) =
+            db.execSQL("ALTER TABLE Lyrics ADD COLUMN mode INTEGER")
     }
 }
 

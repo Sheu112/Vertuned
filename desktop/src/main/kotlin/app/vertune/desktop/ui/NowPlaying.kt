@@ -3,6 +3,7 @@ package app.vertune.desktop.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -11,6 +12,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +32,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -50,21 +54,33 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
 import app.vertune.desktop.data.Library
 import app.vertune.desktop.data.Settings
 import app.vertune.desktop.data.Track
 import app.vertune.desktop.player.AudioEffects
 import app.vertune.desktop.player.LyricsLoader
 import app.vertune.desktop.player.PlayerController
+import app.vitune.providers.wordsync.WordLyrics
 import kotlinx.coroutines.delay
 
 /**
@@ -353,7 +369,6 @@ private fun CoverWithLyrics(t: Track, size: Dp) {
 @Composable
 private fun LyricsOverlay(t: Track) {
     val palette = LocalPalette.current
-    val synced by Settings.showSyncedLyrics.flow.collectAsState()
     val lyrics by produceState<Library.SavedLyrics?>(null, t.id) {
         value = null
         // Wait for the song's length, which helps find the right synced lyrics.
@@ -363,7 +378,31 @@ private fun LyricsOverlay(t: Track) {
         value = runCatching { LyricsLoader.load(t, d) }.getOrElse { Library.SavedLyrics("", "") }
     }
     val lines = remember(lyrics?.synced) { LyricsLoader.parseSynced(lyrics?.synced) }
-    val missing = lyrics != null && (if (synced) lines == null else lyrics?.fixed.isNullOrBlank())
+
+    // Each song remembers word-by-word, line-by-line or unsynchronized (word-by-word until changed),
+    // the same way the phone does.
+    var chosenMode by remember(t.id, lyrics) { mutableStateOf(lyrics?.mode) }
+    val mode = chosenMode ?: LYRICS_MODE_WORD
+    val wordMode = mode == LYRICS_MODE_WORD
+    val wantsSynced = mode != LYRICS_MODE_UNSYNCED
+    val setMode: (Int) -> Unit = { newMode ->
+        chosenMode = newMode
+        runCatching { Library.saveLyricsMode(t.id, newMode) }
+    }
+
+    // Word-by-word lyrics (NetEase, then QQ Music), looked up once per song after the rest.
+    val wordText by produceState<String?>(null, t.id, lyrics, wantsSynced, wordMode) {
+        val saved = lyrics ?: return@produceState
+        value = saved.word
+        if (saved.word == null && wantsSynced && wordMode) {
+            value = runCatching { LyricsLoader.loadWord(t, PlayerController.durationMs.value) }.getOrNull()
+        }
+    }
+    val words = remember(wordText, wordMode) { if (wordMode) LyricsLoader.parseWord(wordText) else null }
+    // A song with no timed lyrics at all shows the plain ones, unless synced was picked on purpose.
+    val noTimedLyrics = lyrics != null && lines == null && wordText == ""
+    val synced = wantsSynced && !(chosenMode == null && noTimedLyrics)
+    val missing = lyrics != null && (if (synced) lines == null && words == null else lyrics?.fixed.isNullOrBlank())
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
         val height = maxHeight
@@ -375,10 +414,11 @@ private fun LyricsOverlay(t: Track) {
                 style = Type.xs.medium.color(Color.White).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color.Black.copy(0.4f)).padding(8.dp)
             )
+            synced && words != null -> WordSyncedLyrics(words, height)
             synced && lines != null -> SyncedLyrics(lines, height)
             else -> BasicText(
                 lyrics?.fixed.orEmpty(),
-                style = Type.xs.medium.color(Color.White).copy(textAlign = TextAlign.Center),
+                style = lyricsText().color(Color.White).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = height / 4, horizontal = 32.dp)
             )
         }
@@ -388,15 +428,16 @@ private fun LyricsOverlay(t: Track) {
             var menu by remember { mutableStateOf(false) }
             AppIconButton("ellipsis_horizontal", Color.White, { menu = true }, size = 20.dp)
             DarkMenu(menu, { menu = false }) {
-                MenuItem(
-                    if (synced) str("show_unsynchronized_lyrics", "Show unsynchronized lyrics")
-                    else str("show_synchronized_lyrics", "Show synchronized lyrics"),
-                    "time"
-                ) { menu = false; Settings.showSyncedLyrics.value = !synced }
-                MenuItem(str("search_lyrics_online", "Search lyrics online"), "search") {
-                    menu = false
-                    openUrl("https://www.google.com/search?q=" + java.net.URLEncoder.encode("${t.title} ${t.artists.orEmpty()} lyrics", "UTF-8"))
-                }
+                // Compact rows: this song's lyrics mode, then the text size
+                LyricsModeRow(
+                    current = when {
+                        !synced -> LYRICS_MODE_UNSYNCED
+                        wordMode -> LYRICS_MODE_WORD
+                        else -> LYRICS_MODE_LINE
+                    },
+                    onPick = { menu = false; setMode(it) }
+                )
+                LyricsSizeRow()
             }
         }
     }
@@ -407,20 +448,107 @@ private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
     val palette = LocalPalette.current
     val position by PlayerController.positionMs.collectAsState()
     val index = lines.indexOfLast { it.first <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
-    val state = rememberLazyListState()
-    LaunchedEffect(index) { state.animateScrollToItem((index + 1).coerceAtLeast(0), -(height.value / 3).toInt()) }
-    LazyColumn(state = state, userScrollEnabled = false, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
-        item { Spacer(Modifier.height(height)) }
+    FollowingLyricsList(lines, index, height) {
         itemsIndexed(lines) { i, (_, line) ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
-            if (line.isBlank()) AppIcon("musical_notes", color, Modifier.padding(vertical = 4.dp, horizontal = 32.dp), size = 14.dp)
+            if (line.isBlank()) AppIcon("musical_notes", color, Modifier.padding(vertical = 4.dp, horizontal = 32.dp), size = 16.dp)
             else BasicText(
                 line,
-                style = Type.xs.medium.color(color).copy(textAlign = TextAlign.Center),
+                style = lyricsText().color(color).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
             )
         }
-        item { Spacer(Modifier.height(height)) }
+    }
+}
+
+/**
+ * The synced lyrics list. It keeps the current line in view until you scroll it yourself;
+ * then it stays where you put it and a "Back to current line" button appears.
+ */
+@Composable
+private fun FollowingLyricsList(key: Any, index: Int, height: Dp, items: LazyListScope.() -> Unit) {
+    val state = rememberLazyListState()
+    var follow by remember(key) { mutableStateOf(true) }
+    // Only scrolls you make go through here (wheel, trackpad, dragging), not the automatic ones.
+    val userScroll = remember(key) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y != 0f) follow = false
+                return Offset.Zero
+            }
+        }
+    }
+    // Before the first line starts, keep the first line in its spot (not yet lit) so the lyrics show.
+    LaunchedEffect(index, follow) { if (follow) state.slideToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
+    Box(Modifier.fillMaxSize().nestedScroll(userScroll)) {
+        LazyColumn(state = state, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
+            // Just enough room for the first and last lines to reach the reading spot (a third
+            // of the way down), so scrolling stops there instead of running into empty space.
+            item { Spacer(Modifier.height(height / 3)) }
+            items()
+            item { Spacer(Modifier.height(height * 2 / 3)) }
+        }
+        AnimatedVisibility(!follow, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(alpha = 0.18f))
+                    .clickable { follow = true }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            ) {
+                AppIcon("lyrics_sync", Color.White, size = 16.dp)
+                BasicText(str("lyrics_back_to_line", "Sync"), style = Type.xs.semiBold.color(Color.White))
+            }
+        }
+    }
+}
+
+/** Like [SyncedLyrics], but the current line lights up word by word as it's sung. */
+@Composable
+private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
+    val palette = LocalPalette.current
+    val reported by PlayerController.positionMs.collectAsState()
+    val playing by PlayerController.isPlaying.collectAsState()
+    // The player reports its position a few times a second; fill in the frames between.
+    var position by remember { mutableStateOf(reported) }
+    LaunchedEffect(reported, playing) {
+        val base = reported
+        val since = System.nanoTime()
+        position = base
+        if (!playing) return@LaunchedEffect
+        while (true) {
+            withFrameMillis { }
+            position = base + (System.nanoTime() - since) / 1_000_000
+        }
+    }
+
+    val lines = lyrics.lines
+    val index = lines.indexOfLast { it.start <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
+    FollowingLyricsList(lines, index, height) {
+        itemsIndexed(lines) { i, line ->
+            val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
+            val style = lyricsText().copy(textAlign = TextAlign.Center)
+            val modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
+            if (i == index) BasicText(wordLine(line, position, Color.White, palette.textDisabled), style = style, modifier = modifier)
+            else BasicText(line.text, style = style.color(color), modifier = modifier)
+        }
+    }
+}
+
+/** The line's words, each brightening from [unsung] to [sung] over its own duration. */
+private fun wordLine(line: WordLyrics.Line, now: Long, sung: Color, unsung: Color) = buildAnnotatedString {
+    line.words.forEachIndexed { i, word ->
+        val progress = when {
+            now >= word.end || word.duration <= 0 -> if (now >= word.start) 1f else 0f
+            now <= word.start -> 0f
+            else -> (now - word.start).toFloat() / word.duration
+        }
+        var text = word.text
+        if (i == 0) text = text.trimStart()
+        if (i == line.words.lastIndex) text = text.trimEnd()
+        withStyle(SpanStyle(color = lerp(unsung, sung, progress))) { append(text) }
     }
 }
 
@@ -467,11 +595,14 @@ fun DarkMenu(expanded: Boolean, onDismiss: () -> Unit, content: @Composable () -
 }
 
 @Composable
-fun MenuItem(text: String, icon: String?, onClick: () -> Unit) {
+fun MenuItem(text: String, icon: String?, checked: Boolean = false, onClick: () -> Unit) {
     val palette = LocalPalette.current
     DropdownMenuItem(
         text = { BasicText(text, style = Type.xs.medium.color(palette.text)) },
         leadingIcon = icon?.let { { AppIcon(it, palette.text, size = 18.dp) } },
+        trailingIcon = if (checked) {
+            { BasicText("✓", style = Type.s.semiBold.color(palette.accent)) }
+        } else null,
         onClick = onClick
     )
 }
@@ -565,3 +696,116 @@ private fun SleepTimerDialog(onDismiss: () -> Unit) {
 private val CONTROL_HEIGHT = 64.dp
 private val PRESS_OFFSET = 8.dp
 private const val LYRICS_LEAD_MS = 50L
+
+// How a song's lyrics are shown, saved per song (same numbers as the phone's LyricsMode).
+private const val LYRICS_MODE_UNSYNCED = 0
+private const val LYRICS_MODE_LINE = 1
+private const val LYRICS_MODE_WORD = 2
+
+/** Lyrics text at the size picked in the lyrics menu (16 by default, a step up from the phone's 14). */
+@Composable
+private fun lyricsText(): androidx.compose.ui.text.TextStyle {
+    val size by Settings.lyricsTextSize.flow.collectAsState()
+    val base = Type.s.medium
+    return base.copy(
+        fontSize = size.sp,
+        lineHeight = if (base.lineHeight.isSpecified) (size * 1.5f).sp else base.lineHeight
+    )
+}
+
+/** Three side-by-side buttons for this song's lyrics mode, the current one highlighted. */
+@Composable
+private fun LyricsModeRow(current: Int, onPick: (Int) -> Unit) {
+    val palette = LocalPalette.current
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        listOf(
+            LYRICS_MODE_WORD to str("lyrics_mode_word_short", "Word"),
+            LYRICS_MODE_LINE to str("lyrics_mode_line_short", "Line"),
+            LYRICS_MODE_UNSYNCED to str("lyrics_mode_unsynced_short", "Plain")
+        ).forEach { (mode, label) ->
+            val selected = mode == current
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (selected) palette.accent else palette.background2)
+                    .clickable { onPick(mode) }
+                    .padding(vertical = 8.dp)
+            ) {
+                BasicText(label, style = Type.xs.semiBold.color(if (selected) palette.onAccent else palette.text))
+            }
+        }
+    }
+}
+
+/** "Text size" with smaller/bigger buttons; changes apply right away and the menu stays open. */
+@Composable
+private fun LyricsSizeRow() {
+    val palette = LocalPalette.current
+    val size by Settings.lyricsTextSize.flow.collectAsState()
+    val index = LYRICS_SIZES.indexOfFirst { it.third == size }.coerceAtLeast(0)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        BasicText(str("lyrics_text_size", "Text size"), style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
+        @Composable
+        fun step(label: String, delta: Int) {
+            val target = LYRICS_SIZES.getOrNull(index + delta)
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(palette.background2)
+                    .clickable(enabled = target != null) { target?.let { Settings.lyricsTextSize.value = it.third } }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                BasicText(label, style = Type.xs.semiBold.color(if (target != null) palette.text else palette.textDisabled))
+            }
+        }
+        step("A−", -1)
+        Box(Modifier.width(76.dp), contentAlignment = Alignment.Center) {
+            BasicText(
+                LYRICS_SIZES[index].let { str(it.first, it.second) },
+                style = Type.xs.medium.color(palette.textSecondary)
+            )
+        }
+        step("A+", 1)
+    }
+}
+
+/**
+ * Slides the list so item [index] sits [offset] px into it (negative = further down), even when
+ * that item is far off screen; plain animateScrollToItem jumps most of the way in that case.
+ */
+private suspend fun LazyListState.slideToItem(index: Int, offset: Int) {
+    val visible = layoutInfo.visibleItemsInfo
+    val target = visible.firstOrNull { it.index == index }
+    if (target != null) {
+        // Longer trips take longer, so a jump back from far away is an easy glide.
+        val distance = (target.offset + offset).toFloat()
+        val duration = (450 + kotlin.math.abs(distance) / 2).toInt().coerceAtMost(1100)
+        animateScrollBy(distance, tween(duration, easing = FastOutSlowInEasing))
+        return
+    }
+    if (visible.isNotEmpty()) {
+        // Guess the distance from the average height of the lines on screen, slide, then settle exactly.
+        val average = visible.sumOf { it.size } / visible.size
+        val first = visible.first()
+        val guess = (index - first.index) * average - (-first.offset) + offset
+        animateScrollBy(guess.toFloat(), tween(1100, easing = FastOutSlowInEasing))
+    }
+    animateScrollToItem(index, offset)
+}
+
+/** The lyrics text sizes offered in the menu: (label key, fallback label, size). */
+private val LYRICS_SIZES = listOf(
+    Triple("lyrics_size_small", "Small", 14),
+    Triple("lyrics_size_medium", "Medium", 16),
+    Triple("lyrics_size_large", "Large", 19),
+    Triple("lyrics_size_extra_large", "Extra large", 23)
+)

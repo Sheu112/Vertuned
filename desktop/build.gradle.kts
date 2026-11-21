@@ -15,6 +15,7 @@ dependencies {
     implementation(projects.providers.lrclib)
     implementation(projects.providers.kugou)
     implementation(projects.providers.sponsorblock)
+    implementation(projects.providers.wordsync)
 
     implementation(compose.desktop.currentOs)
     implementation("org.jetbrains.compose.foundation:foundation:1.12.2")
