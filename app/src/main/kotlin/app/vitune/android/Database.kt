@@ -703,6 +703,17 @@ interface DatabaseAccessor {
         period: Long
     ): Flow<List<SongWithPlayTime>>
 
+    @Query("SELECT COALESCE(SUM(totalPlayTimeMs), 0) FROM Song WHERE id NOT LIKE '$LOCAL_KEY_PREFIX%'")
+    fun totalPlayTimeMs(): Flow<Long>
+
+    @Query(
+        """
+        SELECT COALESCE(SUM(playTime), 0) FROM Event
+        WHERE (:now - timestamp) <= :period AND songId NOT LIKE '$LOCAL_KEY_PREFIX%'
+        """
+    )
+    fun totalPlayTimeMs(now: Long = System.currentTimeMillis(), period: Long): Flow<Long>
+
     @Transaction
     @Query("SELECT * FROM Event ORDER BY timestamp DESC")
     fun events(): Flow<List<EventWithSong>>
