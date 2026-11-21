@@ -430,7 +430,7 @@ private fun LyricsOverlay(t: Track) {
             var menu by remember { mutableStateOf(false) }
             AppIconButton("ellipsis_horizontal", Color.White, { menu = true }, size = 20.dp)
             DarkMenu(menu, { menu = false }) {
-                // Compact rows: this song's lyrics mode, then the text size
+                // The lyrics mode on top, then two pages: how the text looks, and its timing.
                 LyricsModeRow(
                     current = when {
                         !synced -> LYRICS_MODE_UNSYNCED
@@ -439,16 +439,27 @@ private fun LyricsOverlay(t: Track) {
                     },
                     onPick = { menu = false; setMode(it) }
                 )
-                LyricsSizeRow()
-                val allSongs by Settings.lyricsTimingMs.flow.collectAsState()
-                // Both rows read as "how much earlier": the song's own offset is stored like the
-                // phone's (positive = later), so it's flipped for display.
-                LyricsTimingRow("This song", -startTime) { earlier ->
-                    startTime = -earlier
-                    runCatching { Library.saveLyricsStart(t.id, -earlier) }
+                var page by remember { mutableStateOf(0) }
+                // Plain lyrics have no timing, so only the Text page is offered for them.
+                val pages = if (synced) listOf("Text", "Timing") else listOf("Text")
+                if (page >= pages.size) page = 0
+                MenuTabs(pages, page) { page = it }
+                when (page) {
+                    0 -> {
+                        LyricsSizeRow()
+                        if (synced && words != null) WordFadeRow()
+                    }
+                    else -> {
+                        val allSongs by Settings.lyricsTimingMs.flow.collectAsState()
+                        // Both rows read as "how much earlier": the song's own offset is stored like
+                        // the phone's (positive = later), so it's flipped for display.
+                        LyricsTimingRow("This song", -startTime) { earlier ->
+                            startTime = -earlier
+                            runCatching { Library.saveLyricsStart(t.id, -earlier) }
+                        }
+                        LyricsTimingRow("All songs", allSongs) { Settings.lyricsTimingMs.value = it }
+                    }
                 }
-                LyricsTimingRow("All songs", allSongs) { Settings.lyricsTimingMs.value = it }
-                if (synced && words != null) WordFadeRow()
             }
         }
     }
@@ -756,7 +767,7 @@ private fun LyricsModeRow(current: Int, onPick: (Int) -> Unit) {
     val palette = LocalPalette.current
     Row(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+        modifier = Modifier.width(MENU_WIDTH).padding(horizontal = 12.dp, vertical = 4.dp)
     ) {
         listOf(
             LYRICS_MODE_WORD to str("lyrics_mode_word_short", "Word"),
@@ -779,113 +790,132 @@ private fun LyricsModeRow(current: Int, onPick: (Int) -> Unit) {
     }
 }
 
-/** "Text size" with smaller/bigger buttons; changes apply right away and the menu stays open. */
+/** "Size" with smaller/bigger buttons; changes apply right away and the menu stays open. */
 @Composable
 private fun LyricsSizeRow() {
-    val palette = LocalPalette.current
     val size by Settings.lyricsTextSize.flow.collectAsState()
     val index = LYRICS_SIZES.indexOfFirst { it.third == size }.coerceAtLeast(0)
+    val smaller = LYRICS_SIZES.getOrNull(index - 1)
+    val bigger = LYRICS_SIZES.getOrNull(index + 1)
+    StepperRow(
+        label = "Size",
+        value = LYRICS_SIZES[index].let { str(it.first, it.second) },
+        less = "A−" to smaller?.let { { Settings.lyricsTextSize.value = it.third } },
+        more = "A+" to bigger?.let { { Settings.lyricsTextSize.value = it.third } }
+    )
+}
+
+/** Tabs inside a menu ("Text" / "Timing"): the chosen one is underlined in the accent colour. */
+@Composable
+private fun MenuTabs(titles: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    val palette = LocalPalette.current
+    Column(Modifier.width(MENU_WIDTH).padding(top = 6.dp)) {
+        Row(Modifier.padding(horizontal = 12.dp)) {
+            titles.forEachIndexed { i, title ->
+                val on = i == selected
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSelect(i) }
+                        .padding(top = 6.dp)
+                ) {
+                    BasicText(title, style = Type.xs.semiBold.color(if (on) palette.text else palette.textSecondary))
+                    Box(
+                        Modifier
+                            .padding(top = 6.dp)
+                            .fillMaxWidth(0.6f)
+                            .height(2.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(if (on) palette.accent else Color.Transparent)
+                    )
+                }
+            }
+        }
+        Box(Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(1.dp).background(palette.background2))
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+/**
+ * One setting with a "less" button, its current value and a "more" button, all in fixed columns
+ * so every row in the menu lines up. A null action greys its button out; clicking the value resets.
+ */
+@Composable
+private fun StepperRow(
+    label: String,
+    value: String,
+    less: Pair<String, (() -> Unit)?>,
+    more: Pair<String, (() -> Unit)?>,
+    onReset: (() -> Unit)? = null
+) {
+    val palette = LocalPalette.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+        modifier = Modifier.width(MENU_WIDTH).padding(horizontal = 12.dp, vertical = 4.dp)
     ) {
-        BasicText(str("lyrics_text_size", "Text size"), style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
+        BasicText(label, style = Type.xs.medium.color(palette.text), modifier = Modifier.width(76.dp))
         @Composable
-        fun step(label: String, delta: Int) {
-            val target = LYRICS_SIZES.getOrNull(index + delta)
+        fun button(spec: Pair<String, (() -> Unit)?>) {
+            val action = spec.second
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
+                    .width(68.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(palette.background2)
-                    .clickable(enabled = target != null) { target?.let { Settings.lyricsTextSize.value = it.third } }
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .clickable(enabled = action != null) { action?.invoke() }
+                    .padding(vertical = 7.dp)
             ) {
-                BasicText(label, style = Type.xs.semiBold.color(if (target != null) palette.text else palette.textDisabled))
+                BasicText(spec.first, style = Type.xs.semiBold.color(if (action != null) palette.text else palette.textDisabled))
             }
         }
-        step("A−", -1)
-        Box(Modifier.width(76.dp), contentAlignment = Alignment.Center) {
-            BasicText(
-                LYRICS_SIZES[index].let { str(it.first, it.second) },
-                style = Type.xs.medium.color(palette.textSecondary)
-            )
+        button(less)
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .weight(1f)
+                .then(if (onReset != null) Modifier.clickable(onClick = onReset) else Modifier)
+        ) {
+            BasicText(value, maxLines = 1, style = Type.xs.medium.color(palette.textSecondary))
         }
-        step("A+", 1)
+        button(more)
     }
 }
+
+private val MENU_WIDTH = 340.dp
 
 /** Shows synced lyrics earlier or later in 0.1 s steps; click the value to reset it. */
 @Composable
 private fun LyricsTimingRow(label: String, earlierMs: Long, onChange: (Long) -> Unit) {
-    val palette = LocalPalette.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.width(330.dp).padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        BasicText(label, style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
-        @Composable
-        fun step(text: String, delta: Long) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(palette.background2)
-                    .clickable { onChange((earlierMs + delta).coerceIn(-TIMING_LIMIT_MS, TIMING_LIMIT_MS)) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                BasicText(text, style = Type.xs.semiBold.color(palette.text))
-            }
-        }
-        step("Later", -TIMING_STEP_MS)
-        Box(
-            Modifier.width(96.dp).clickable { onChange(0L) },
-            contentAlignment = Alignment.Center
-        ) {
-            BasicText(
-                when {
-                    earlierMs == 0L -> "Normal"
-                    earlierMs > 0 -> "%.1f s earlier".format(java.util.Locale.ROOT, earlierMs / 1000f)
-                    else -> "%.1f s later".format(java.util.Locale.ROOT, -earlierMs / 1000f)
-                },
-                style = Type.xs.medium.color(palette.textSecondary)
-            )
-        }
-        step("Earlier", TIMING_STEP_MS)
-    }
+    fun shift(delta: Long) = onChange((earlierMs + delta).coerceIn(-TIMING_LIMIT_MS, TIMING_LIMIT_MS))
+    StepperRow(
+        label = label,
+        value = when {
+            earlierMs == 0L -> "Normal"
+            earlierMs > 0 -> "%.1f s earlier".format(java.util.Locale.ROOT, earlierMs / 1000f)
+            else -> "%.1f s later".format(java.util.Locale.ROOT, -earlierMs / 1000f)
+        },
+        less = "Later" to { shift(-TIMING_STEP_MS) },
+        more = "Earlier" to { shift(TIMING_STEP_MS) },
+        onReset = { onChange(0L) }
+    )
 }
 
 /** "Word fade": how quickly each word lights up in word-by-word lyrics. */
 @Composable
 private fun WordFadeRow() {
-    val palette = LocalPalette.current
     val fade by Settings.lyricsWordFade.flow.collectAsState()
     val index = WORD_FADES.indexOfFirst { it.second == fade }.let { if (it < 0) WORD_FADES.lastIndex else it }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.width(330.dp).padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        BasicText("Word fade", style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
-        @Composable
-        fun step(text: String, delta: Int) {
-            val target = WORD_FADES.getOrNull(index + delta)
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(palette.background2)
-                    .clickable(enabled = target != null) { target?.let { Settings.lyricsWordFade.value = it.second } }
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                BasicText(text, style = Type.xs.semiBold.color(if (target != null) palette.text else palette.textDisabled))
-            }
-        }
-        step("Faster", -1)
-        Box(Modifier.width(96.dp), contentAlignment = Alignment.Center) {
-            BasicText(WORD_FADES[index].first, style = Type.xs.medium.color(palette.textSecondary))
-        }
-        step("Slower", 1)
-    }
+    val faster = WORD_FADES.getOrNull(index - 1)
+    val slower = WORD_FADES.getOrNull(index + 1)
+    StepperRow(
+        label = "Word fade",
+        value = WORD_FADES[index].first,
+        less = "Faster" to faster?.let { { Settings.lyricsWordFade.value = it.second } },
+        more = "Slower" to slower?.let { { Settings.lyricsWordFade.value = it.second } }
+    )
 }
 
 // Word fade choices: name and how long the fade lasts as a % of the word's sung time.
