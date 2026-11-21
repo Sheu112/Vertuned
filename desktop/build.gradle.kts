@@ -47,6 +47,8 @@ compose.desktop {
     application {
         mainClass = "app.vertune.desktop.MainKt"
         jvmArgs += listOf(
+            // Shown in Settings → About.
+            "-Dvertune.version=${project.version}",
             "--enable-native-access=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.awt=ALL-UNNAMED"
         )
@@ -65,7 +67,7 @@ compose.desktop {
             appResourcesRootDir.set(project.layout.projectDirectory.dir("resources"))
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi)
             packageName = "Vertune"
-            packageVersion = "1.0.0"
+            packageVersion = project.version.toString()
             description = "Vertune music player"
             vendor = "Vertune"
             // The parts of Java the app and its libraries use (includeAllModules makes jlink fail on JDK 25).

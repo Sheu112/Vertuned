@@ -96,5 +96,6 @@ object Paths {
 
 object AppInfo {
     const val NAME = "Vertune"
-    const val VERSION = "1.0.0"
+    /** Set by the build (see desktop/build.gradle.kts); "dev" when run straight from Gradle. */
+    val VERSION: String = System.getProperty("vertune.version") ?: "dev"
 }
