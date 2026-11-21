@@ -87,8 +87,10 @@ import app.vitune.android.transaction
 import app.vitune.android.ui.components.LocalMenuState
 import app.vitune.android.ui.components.themed.CircularProgressIndicator
 import app.vitune.android.ui.components.themed.DefaultDialog
+import app.vitune.android.ui.components.themed.DialogTextButton
 import app.vitune.android.ui.components.themed.Menu
 import app.vitune.android.ui.components.themed.MenuEntry
+import app.vitune.android.ui.components.themed.SliderDialog
 import app.vitune.android.ui.components.themed.TextField
 import app.vitune.android.ui.components.themed.TextFieldDialog
 import app.vitune.android.ui.components.themed.TextPlaceholder
@@ -126,10 +128,10 @@ import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // Lyrics run this many ms ahead of the audio. The phone's player reports exactly what you hear,
@@ -193,6 +195,7 @@ fun Lyrics(
     val setMode: (Int) -> Unit = { newMode ->
         lyrics?.let { current -> query { Database.upsert(current.copy(mode = newMode)) } }
     }
+    var adjustingOffset by remember(mediaId) { mutableStateOf(false) }
     val lyricsSize = PlayerPreferences.lyricsTextSize
     val lyricsStyle = typography.xs.copy(fontSize = lyricsSize.sp).center.medium
     val wordLyrics = remember(lyrics?.word, wordByWord) {
@@ -379,6 +382,15 @@ fun Lyrics(
                 }
             }
         }
+    )
+
+    if (adjustingOffset) LyricsOffsetDialog(
+        startTime = lyrics?.startTime ?: 0L,
+        currentPosition = { binder?.player?.currentPosition ?: 0L },
+        onChange = { newStart ->
+            lyrics?.let { query { Database.upsert(it.copy(startTime = newStart)) } }
+        },
+        onDismiss = { adjustingOffset = false }
     )
 
     if (picking && shouldShowSynchronizedLyrics) {
@@ -771,12 +783,7 @@ fun Lyrics(
                                             ),
                                             onClick = {
                                                 menuState.hide()
-                                                lyrics?.let {
-                                                    val startTime = binder?.player?.currentPosition
-                                                    query {
-                                                        Database.upsert(it.copy(startTime = startTime))
-                                                    }
-                                                }
+                                                adjustingOffset = true
                                             }
                                         )
                                     }
@@ -1052,5 +1059,77 @@ private class LyricsClock {
         anchorPosition = raw
         anchorNanos = now
         position = raw
+    }
+}
+
+/**
+ * Moves the lyrics earlier or later. The start offset is where in the song the lyrics begin:
+ * positive starts them later, negative (before the song starts) makes them show up earlier.
+ * Changes apply right away so you can hear the result while the song plays.
+ */
+@Composable
+private fun LyricsOffsetDialog(
+    startTime: Long,
+    currentPosition: () -> Long,
+    onChange: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val (colorPalette, typography) = LocalAppearance.current
+    var value by remember { mutableLongStateOf(startTime) }
+    val set: (Long) -> Unit = { value = it; onChange(it) }
+
+    SliderDialog(onDismiss = onDismiss, title = stringResource(R.string.set_lyrics_start_offset)) {
+        BasicText(
+            text = "%+.1f s".format(java.util.Locale.ROOT, value / 1000f),
+            style = typography.xxl.semiBold.center.color(colorPalette.text),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+        )
+        BasicText(
+            text = stringResource(
+                when {
+                    value < 0 -> R.string.lyrics_offset_earlier
+                    value > 0 -> R.string.lyrics_offset_later
+                    else -> R.string.lyrics_offset_none
+                }
+            ),
+            style = typography.xs.medium.center.color(colorPalette.textSecondary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 4.dp)
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+        ) {
+            listOf(-1000L to "−1s", -100L to "−0.1s", 100L to "+0.1s", 1000L to "+1s").forEach { (step, label) ->
+                BasicText(
+                    text = label,
+                    style = typography.xs.semiBold.center.color(colorPalette.text),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(colorPalette.background2)
+                        .clickable { set(value + step) }
+                        .padding(vertical = 10.dp)
+                )
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 16.dp)
+        ) {
+            DialogTextButton(
+                text = stringResource(R.string.lyrics_offset_use_current),
+                onClick = { set(currentPosition()) }
+            )
+            DialogTextButton(
+                text = stringResource(R.string.reset),
+                onClick = { set(0L) }
+            )
+        }
     }
 }
