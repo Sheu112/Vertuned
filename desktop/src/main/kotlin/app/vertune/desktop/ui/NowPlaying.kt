@@ -440,7 +440,8 @@ private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
     val index = lines.indexOfLast { it.first <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
     val follow by Settings.lyricsFollowLine.flow.collectAsState()
     val state = rememberLazyListState()
-    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem((index + 1).coerceAtLeast(0), -(height.value / 3).toInt()) }
+    // Before the first line starts, keep the first line in its spot (not yet lit) so the lyrics show.
+    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
     LazyColumn(state = state, userScrollEnabled = !follow, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
         item { Spacer(Modifier.height(height)) }
         itemsIndexed(lines) { i, (_, line) ->
@@ -479,7 +480,8 @@ private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
     val index = lines.indexOfLast { it.start <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
     val follow by Settings.lyricsFollowLine.flow.collectAsState()
     val state = rememberLazyListState()
-    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem((index + 1).coerceAtLeast(0), -(height.value / 3).toInt()) }
+    // Before the first line starts, keep the first line in its spot (not yet lit) so the lyrics show.
+    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
     LazyColumn(state = state, userScrollEnabled = !follow, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
         item { Spacer(Modifier.height(height)) }
         itemsIndexed(lines) { i, line ->
