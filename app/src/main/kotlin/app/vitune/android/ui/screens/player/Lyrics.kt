@@ -48,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -86,8 +87,10 @@ import app.vitune.android.transaction
 import app.vitune.android.ui.components.LocalMenuState
 import app.vitune.android.ui.components.themed.CircularProgressIndicator
 import app.vitune.android.ui.components.themed.DefaultDialog
+import app.vitune.android.ui.components.themed.DialogTextButton
 import app.vitune.android.ui.components.themed.Menu
 import app.vitune.android.ui.components.themed.MenuEntry
+import app.vitune.android.ui.components.themed.SliderDialog
 import app.vitune.android.ui.components.themed.TextField
 import app.vitune.android.ui.components.themed.TextFieldDialog
 import app.vitune.android.ui.components.themed.TextPlaceholder
@@ -125,13 +128,16 @@ import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val UPDATE_DELAY = 50L
+// Lyrics run this many ms ahead of the audio. The phone's player reports exactly what you hear,
+// while the Mac's sound output reports a little ahead of it, so the phone needs a bigger lead to
+// feel the same: words light up just as they're sung rather than a beat after.
+private const val UPDATE_DELAY = 250L
 
 /** Lyrics text sizes offered in the lyrics menu (14 is the original size). */
 private val LYRICS_SIZES = listOf(
@@ -189,6 +195,7 @@ fun Lyrics(
     val setMode: (Int) -> Unit = { newMode ->
         lyrics?.let { current -> query { Database.upsert(current.copy(mode = newMode)) } }
     }
+    var adjustingOffset by remember(mediaId) { mutableStateOf(false) }
     val lyricsSize = PlayerPreferences.lyricsTextSize
     val lyricsStyle = typography.xs.copy(fontSize = lyricsSize.sp).center.medium
     val wordLyrics = remember(lyrics?.word, wordByWord) {
@@ -377,6 +384,15 @@ fun Lyrics(
         }
     )
 
+    if (adjustingOffset) LyricsOffsetDialog(
+        startTime = lyrics?.startTime ?: 0L,
+        currentPosition = { binder?.player?.currentPosition ?: 0L },
+        onChange = { newStart ->
+            lyrics?.let { query { Database.upsert(it.copy(startTime = newStart)) } }
+        },
+        onDismiss = { adjustingOffset = false }
+    )
+
     if (picking && shouldShowSynchronizedLyrics) {
         var query by rememberSaveable {
             mutableStateOf(
@@ -484,12 +500,17 @@ fun Lyrics(
             }
         }
 
-        val currentPosition = {
+        val rawPosition = {
             binder?.player?.let { player ->
                 player.currentPosition + UPDATE_DELAY + lyricsState.offset -
                     (lyrics?.startTime ?: 0L)
             } ?: 0L
         }
+        // The player only refreshes its position every so often, so reading it each frame gives
+        // a position that sits still and then jumps. This clock runs smoothly between those
+        // refreshes (like the Mac app) and only snaps to the player after a seek or a pause.
+        val clock = remember { LyricsClock() }
+        val currentPosition = { clock.position }
         // Updated every tick while word-by-word lyrics are showing, to light up the words.
         var wordPosition by remember { mutableLongStateOf(0L) }
 
@@ -523,14 +544,28 @@ fun Lyrics(
                 LaunchedEffect(synchronizedLyrics, density, animatedHeight, followLyrics) {
                     val currentSynchronizedLyrics = synchronizedLyrics ?: return@LaunchedEffect
                     val centerOffset = with(density) { (-animatedHeight / 3).roundToPx() }
+                    val tick = {
+                        val player = binder?.player
+                        clock.tick(
+                            raw = rawPosition(),
+                            playing = player?.isPlaying == true,
+                            speed = player?.playbackParameters?.speed ?: 1f
+                        )
+                    }
+                    tick()
+                    currentSynchronizedLyrics.update()
+                    if (wordLyrics != null) wordPosition = currentPosition()
 
                     if (followLyrics) lazyListState.slideToItem(
                         index = currentSynchronizedLyrics.index + 1,
                         offset = centerOffset
                     )
 
+                    // Check every screen frame (like the Mac app) rather than every 50 ms, so lines
+                    // change on time and words brighten smoothly instead of in steps.
                     while (true) {
-                        delay(UPDATE_DELAY.milliseconds)
+                        withFrameMillis { }
+                        tick()
                         if (wordLyrics != null) wordPosition = currentPosition()
                         if (!currentSynchronizedLyrics.update() || !followLyrics) continue
 
@@ -748,12 +783,7 @@ fun Lyrics(
                                             ),
                                             onClick = {
                                                 menuState.hide()
-                                                lyrics?.let {
-                                                    val startTime = binder?.player?.currentPosition
-                                                    query {
-                                                        Database.upsert(it.copy(startTime = startTime))
-                                                    }
-                                                }
+                                                adjustingOffset = true
                                             }
                                         )
                                     }
@@ -987,4 +1017,119 @@ private suspend fun LazyListState.slideToItem(index: Int, offset: Int) {
         animateScrollBy(guess.toFloat(), tween(1100, easing = FastOutSlowInEasing))
     }
     animateScrollToItem(index, offset)
+}
+
+/**
+ * A playback position that moves every frame. It follows the player's own clock while playing
+ * and only jumps back to the player's reported position when the two drift apart (a seek,
+ * a pause, a stall), so word-by-word highlighting brightens smoothly.
+ */
+private class LyricsClock {
+    var position = 0L
+        private set
+    private var anchorPosition = 0L
+    private var anchorNanos = 0L
+    private var started = false
+    private var lastRaw = Long.MIN_VALUE
+
+    fun tick(raw: Long, playing: Boolean, speed: Float) {
+        val now = System.nanoTime()
+        if (!started || !playing) {
+            snap(raw, now)
+            started = playing
+            lastRaw = raw
+            return
+        }
+        val predicted = anchorPosition + ((now - anchorNanos) / 1_000_000 * speed).toLong()
+        val error = raw - predicted
+        when {
+            kotlin.math.abs(error) > 250 -> snap(raw, now)
+            raw != lastRaw -> {
+                // A fresh reading from the player: drift gently toward it so we never fall out
+                // of step over a long song, without a visible jump.
+                anchorPosition += error / 10
+                position = predicted + error / 10
+            }
+            else -> position = predicted
+        }
+        lastRaw = raw
+    }
+
+    private fun snap(raw: Long, now: Long) {
+        anchorPosition = raw
+        anchorNanos = now
+        position = raw
+    }
+}
+
+/**
+ * Moves the lyrics earlier or later. The start offset is where in the song the lyrics begin:
+ * positive starts them later, negative (before the song starts) makes them show up earlier.
+ * Changes apply right away so you can hear the result while the song plays.
+ */
+@Composable
+private fun LyricsOffsetDialog(
+    startTime: Long,
+    currentPosition: () -> Long,
+    onChange: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val (colorPalette, typography) = LocalAppearance.current
+    var value by remember { mutableLongStateOf(startTime) }
+    val set: (Long) -> Unit = { value = it; onChange(it) }
+
+    SliderDialog(onDismiss = onDismiss, title = stringResource(R.string.set_lyrics_start_offset)) {
+        BasicText(
+            text = "%+.1f s".format(java.util.Locale.ROOT, value / 1000f),
+            style = typography.xxl.semiBold.center.color(colorPalette.text),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+        )
+        BasicText(
+            text = stringResource(
+                when {
+                    value < 0 -> R.string.lyrics_offset_earlier
+                    value > 0 -> R.string.lyrics_offset_later
+                    else -> R.string.lyrics_offset_none
+                }
+            ),
+            style = typography.xs.medium.center.color(colorPalette.textSecondary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 4.dp)
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+        ) {
+            listOf(-1000L to "−1s", -100L to "−0.1s", 100L to "+0.1s", 1000L to "+1s").forEach { (step, label) ->
+                BasicText(
+                    text = label,
+                    style = typography.xs.semiBold.center.color(colorPalette.text),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(colorPalette.background2)
+                        .clickable { set(value + step) }
+                        .padding(vertical = 10.dp)
+                )
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 16.dp)
+        ) {
+            DialogTextButton(
+                text = stringResource(R.string.lyrics_offset_use_current),
+                onClick = { set(currentPosition()) }
+            )
+            DialogTextButton(
+                text = stringResource(R.string.reset),
+                onClick = { set(0L) }
+            )
+        }
+    }
 }
