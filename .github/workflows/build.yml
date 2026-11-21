@@ -136,7 +136,7 @@ jobs:
           echo 'console.log("qjs ok")' > t.js && "$dir/qjs.exe" t.js
 
       - name: Build Windows installer
-        run: gradle :desktop:packageMsi --configure-on-demand --no-daemon --stacktrace
+        run: gradle :desktop:createDistributable :desktop:packageMsi --configure-on-demand --no-daemon --stacktrace
 
       # Opens the built app for 25 seconds to make sure it starts and stays open.
       - name: Launch the app
