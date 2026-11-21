@@ -48,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -131,6 +132,7 @@ import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
+// Lyrics show this many ms early, the same small lead the Mac app uses.
 private const val UPDATE_DELAY = 50L
 
 /** Lyrics text sizes offered in the lyrics menu (14 is the original size). */
@@ -529,8 +531,10 @@ fun Lyrics(
                         offset = centerOffset
                     )
 
+                    // Check every screen frame (like the Mac app) rather than every 50 ms, so lines
+                    // change on time and words brighten smoothly instead of in steps.
                     while (true) {
-                        delay(UPDATE_DELAY.milliseconds)
+                        withFrameMillis { }
                         if (wordLyrics != null) wordPosition = currentPosition()
                         if (!currentSynchronizedLyrics.update() || !followLyrics) continue
 

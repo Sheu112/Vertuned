@@ -20,8 +20,10 @@ class SynchronizedLyrics(
     private val currentIndex: Int
         get() {
             var index = -1
+            // Read the position once; this runs every frame.
+            val position = positionProvider()
             for ((key) in sentences) {
-                if (key >= positionProvider()) break
+                if (key >= position) break
                 index++
             }
             return if (index == -1) 0 else index
