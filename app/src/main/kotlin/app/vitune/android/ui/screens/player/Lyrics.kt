@@ -3,7 +3,9 @@ package app.vitune.android.ui.screens.player
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -12,6 +14,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -26,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -121,6 +125,7 @@ import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -519,9 +524,9 @@ fun Lyrics(
                     val currentSynchronizedLyrics = synchronizedLyrics ?: return@LaunchedEffect
                     val centerOffset = with(density) { (-animatedHeight / 3).roundToPx() }
 
-                    if (followLyrics) lazyListState.animateScrollToItem(
+                    if (followLyrics) lazyListState.slideToItem(
                         index = currentSynchronizedLyrics.index + 1,
-                        scrollOffset = centerOffset
+                        offset = centerOffset
                     )
 
                     while (true) {
@@ -529,10 +534,13 @@ fun Lyrics(
                         if (wordLyrics != null) wordPosition = currentPosition()
                         if (!currentSynchronizedLyrics.update() || !followLyrics) continue
 
-                        lazyListState.animateScrollToItem(
-                            index = currentSynchronizedLyrics.index + 1,
-                            scrollOffset = centerOffset
-                        )
+                        // Slide in the background so word highlighting keeps updating meanwhile.
+                        launch {
+                            lazyListState.slideToItem(
+                                index = currentSynchronizedLyrics.index + 1,
+                                offset = centerOffset
+                            )
+                        }
                     }
                 }
 
@@ -955,4 +963,25 @@ private fun LyricsSizeRow() {
             )
         }
     }
+}
+
+/**
+ * Slides the list so item [index] sits [offset] px into it (negative = further down), even when
+ * that item is far off screen; plain animateScrollToItem jumps most of the way in that case.
+ */
+private suspend fun LazyListState.slideToItem(index: Int, offset: Int) {
+    val visible = layoutInfo.visibleItemsInfo
+    val target = visible.firstOrNull { it.index == index }
+    if (target != null) {
+        animateScrollBy((target.offset + offset).toFloat(), tween(450, easing = FastOutSlowInEasing))
+        return
+    }
+    if (visible.isNotEmpty()) {
+        // Guess the distance from the average height of the lines on screen, slide, then settle exactly.
+        val average = visible.sumOf { it.size } / visible.size
+        val first = visible.first()
+        val guess = (index - first.index) * average - (-first.offset) + offset
+        animateScrollBy(guess.toFloat(), tween(550, easing = FastOutSlowInEasing))
+    }
+    animateScrollToItem(index, offset)
 }

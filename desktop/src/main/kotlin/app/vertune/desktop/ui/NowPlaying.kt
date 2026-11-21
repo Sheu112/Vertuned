@@ -3,6 +3,7 @@ package app.vertune.desktop.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -11,6 +12,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +33,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -54,18 +57,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -76,8 +79,8 @@ import app.vertune.desktop.data.Settings
 import app.vertune.desktop.data.Track
 import app.vertune.desktop.player.AudioEffects
 import app.vertune.desktop.player.LyricsLoader
-import app.vitune.providers.wordsync.WordLyrics
 import app.vertune.desktop.player.PlayerController
+import app.vitune.providers.wordsync.WordLyrics
 import kotlinx.coroutines.delay
 
 /**
@@ -476,7 +479,7 @@ private fun FollowingLyricsList(key: Any, index: Int, height: Dp, items: LazyLis
         }
     }
     // Before the first line starts, keep the first line in its spot (not yet lit) so the lyrics show.
-    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
+    LaunchedEffect(index, follow) { if (follow) state.slideToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
     Box(Modifier.fillMaxSize().nestedScroll(userScroll)) {
         LazyColumn(state = state, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
             // Just enough room for the first and last lines to reach the reading spot (a third
@@ -773,6 +776,27 @@ private fun LyricsSizeRow() {
         }
         step("A+", 1)
     }
+}
+
+/**
+ * Slides the list so item [index] sits [offset] px into it (negative = further down), even when
+ * that item is far off screen; plain animateScrollToItem jumps most of the way in that case.
+ */
+private suspend fun LazyListState.slideToItem(index: Int, offset: Int) {
+    val visible = layoutInfo.visibleItemsInfo
+    val target = visible.firstOrNull { it.index == index }
+    if (target != null) {
+        animateScrollBy((target.offset + offset).toFloat(), tween(450, easing = FastOutSlowInEasing))
+        return
+    }
+    if (visible.isNotEmpty()) {
+        // Guess the distance from the average height of the lines on screen, slide, then settle exactly.
+        val average = visible.sumOf { it.size } / visible.size
+        val first = visible.first()
+        val guess = (index - first.index) * average - (-first.offset) + offset
+        animateScrollBy(guess.toFloat(), tween(550, easing = FastOutSlowInEasing))
+    }
+    animateScrollToItem(index, offset)
 }
 
 /** The lyrics text sizes offered in the menu: (label key, fallback label, size). */
