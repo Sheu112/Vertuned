@@ -17,6 +17,9 @@ import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
@@ -62,7 +65,8 @@ fun main() {
     println("${AppInfo.NAME} ${AppInfo.VERSION} starting, Java ${System.getProperty("java.version")}, " +
         "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}")
     System.setProperty("apple.awt.application.name", AppInfo.NAME)
-    // Follow the Mac's light/dark mode for window chrome instead of always using light.
+    // Follow the Mac's light/dark mode for window chrome instead of always using light
+    // (Windows title bars are coloured by WinWindows instead).
     System.setProperty("apple.awt.application.appearance", "system")
 
     SingletonImageLoader.setSafe { context ->
@@ -107,9 +111,12 @@ fun main() {
                     event.type != KeyEventType.KeyDown -> false
                     event.key == Key.Escape && nav.showPlayer -> { nav.showPlayer = false; true }
                     event.key == Key.Spacebar -> PlayerController.togglePlay().let { true }
-                    event.isMetaPressed && event.key == Key.DirectionRight -> PlayerController.next().let { true }
-                    event.isMetaPressed && event.key == Key.DirectionLeft -> PlayerController.previous().let { true }
-                    event.isMetaPressed && event.key == Key.LeftBracket -> nav.back().let { true }
+                    // ⌘ on a Mac, Ctrl on Windows.
+                    event.isCommand && event.key == Key.DirectionRight -> PlayerController.next().let { true }
+                    event.isCommand && event.key == Key.DirectionLeft -> PlayerController.previous().let { true }
+                    event.isCommand && event.key == Key.LeftBracket -> nav.back().let { true }
+                    // Windows' usual "go back" keys.
+                    Paths.isWindows && event.isAltPressed && event.key == Key.DirectionLeft -> nav.back().let { true }
                     else -> false
                 }
             }
@@ -120,9 +127,10 @@ fun main() {
                 mainWindow = window
             }
             Box(Modifier.fillMaxSize()) {
-                App(nav, logo)
-                // The see-through title bar still moves the window when dragged.
-                WindowDraggableArea(Modifier.fillMaxWidth().height(TITLE_BAR_HEIGHT)) { Box(Modifier.fillMaxSize()) }
+                App(nav, logo, window)
+                // The see-through Mac title bar still moves the window when dragged
+                // (Windows keeps its own title bar, so there is nothing to cover there).
+                if (Paths.isMac) WindowDraggableArea(Modifier.fillMaxWidth().height(TITLE_BAR_HEIGHT)) { Box(Modifier.fillMaxSize()) }
             }
         }
 
@@ -187,6 +195,9 @@ private class Tee(private val a: java.io.OutputStream, private val b: java.io.Ou
         b.flush()
     }
 }
+
+/** The main shortcut key: ⌘ on a Mac, Ctrl elsewhere. */
+private val KeyEvent.isCommand get() = if (Paths.isMac) isMetaPressed else isCtrlPressed
 
 private const val MIN_WIDTH = 960
 private const val MIN_HEIGHT = 640

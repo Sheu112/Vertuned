@@ -231,7 +231,7 @@ fun QueuePanel(nav: Navigator) {
 
     Column(
         Modifier
-            .padding(top = TITLE_BAR_HEIGHT, end = 12.dp, bottom = 12.dp)
+            .padding(top = TITLE_BAR_HEIGHT.coerceAtLeast(12.dp), end = 12.dp, bottom = 12.dp)
             .width(340.dp)
             .fillMaxHeight()
             .clip(RoundedCornerShape(12.dp))

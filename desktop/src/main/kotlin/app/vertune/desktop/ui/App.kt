@@ -61,10 +61,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 
 @Composable
-fun App(nav: Navigator, @Suppress("UNUSED_PARAMETER") logo: Painter) {
+fun App(nav: Navigator, @Suppress("UNUSED_PARAMETER") logo: Painter, window: java.awt.Window? = null) {
     LaunchedEffect(Unit) { PlayerController.openPlayerRequests.collect { nav.showPlayer = true } }
     VertuneTheme {
         val palette = LocalPalette.current
+        if (window != null) app.vertune.desktop.WindowsTitleBar(window)
         CompositionLocalProvider(
             LocalContextMenuRepresentation provides DefaultContextMenuRepresentation(
                 backgroundColor = palette.surface,

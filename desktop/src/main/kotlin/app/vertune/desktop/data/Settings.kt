@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.prefs.Preferences
 
-/** Small settings, kept in the macOS preferences system (~/Library/Preferences). */
+/** Small settings, kept in the system's preferences store (~/Library/Preferences on a Mac, the registry on Windows). */
 object Settings {
     private val prefs: Preferences = Preferences.userRoot().node("app/vertune/desktop")
 

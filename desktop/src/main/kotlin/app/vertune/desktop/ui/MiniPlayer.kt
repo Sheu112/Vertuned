@@ -65,6 +65,9 @@ fun MiniPlayerWindow(nav: Navigator, icon: Painter, onOpenMain: () -> Unit) {
         remember { window.blendTitleBar(); window.minimumSize = java.awt.Dimension(220, 280) }
         // Float over every Space and full-screen apps. macOS only allows that for apps without a
         // Dock icon, so the icon is hidden while the mini player is open (the main window is too).
+        // On Windows alwaysOnTop is enough: it stays over other windows and borderless full-screen
+        // apps, and hiding the main window takes it off the taskbar, leaving just the mini player.
+        // (Both calls do nothing outside macOS.)
         DisposableEffect(Unit) {
             MacWindows.setDockIconVisible(false)
             onDispose { MacWindows.setDockIconVisible(true) }
@@ -76,6 +79,7 @@ fun MiniPlayerWindow(nav: Navigator, icon: Painter, onOpenMain: () -> Unit) {
         VertuneTheme {
             val palette = LocalPalette.current.forPlayer()
             CompositionLocalProvider(LocalPalette provides palette) {
+                app.vertune.desktop.WindowsTitleBar(window)
                 MiniPlayer(onClose = { nav.showMiniPlayer = false }, onOpenMain = onOpenMain)
             }
         }
@@ -98,7 +102,7 @@ private fun MiniPlayer(onClose: () -> Unit, onOpenMain: () -> Unit) {
             .fillMaxSize()
             .background(palette.background0)
             .hoverable(hover)
-            .padding(start = 12.dp, end = 12.dp, top = TITLE_BAR_HEIGHT, bottom = 12.dp)
+            .padding(start = 12.dp, end = 12.dp, top = TITLE_BAR_HEIGHT.coerceAtLeast(12.dp), bottom = 12.dp)
     ) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             val side = minOf(maxWidth, maxHeight)
@@ -168,5 +172,5 @@ fun java.awt.Window.blendTitleBar() {
 /** Gives macOS a moment to create the window before changing how it floats. */
 private const val FLOAT_DELAY_MS = 300L
 
-/** Height of the see-through macOS title bar, kept clear of controls. */
-val TITLE_BAR_HEIGHT = 28.dp
+/** Height of the see-through macOS title bar, kept clear of controls (Windows has a normal title bar). */
+val TITLE_BAR_HEIGHT = if (app.vertune.desktop.Paths.isMac) 28.dp else 0.dp

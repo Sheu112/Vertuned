@@ -412,7 +412,7 @@ fun HistoryScreen(nav: Navigator) = BuiltInPage(
     "History", rememberLibrary { Library.history() }, "Songs you listen to show up here.", nav
 )
 
-/** Songs saved on this Mac, which play without internet (the phone's Offline playlist). */
+/** Songs saved on this computer, which play without internet (the phone's Offline playlist). */
 @Composable
 fun OfflineScreen(nav: Navigator) {
     val ids by SongCache.ids.collectAsState()
@@ -423,7 +423,7 @@ fun OfflineScreen(nav: Navigator) {
         "Songs are saved here as you play them, so they start instantly and play without internet. " +
             "You can also right-click a song and choose Save for offline.",
         nav,
-        info = if (tracks.isNullOrEmpty()) null else "${tracks.size} songs • ${formatBytes(bytes)} on this Mac"
+        info = if (tracks.isNullOrEmpty()) null else "${tracks.size} songs • ${formatBytes(bytes)} on this ${app.vertune.desktop.Paths.deviceName}"
     )
 }
 

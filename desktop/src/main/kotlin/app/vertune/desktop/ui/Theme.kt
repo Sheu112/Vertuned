@@ -204,6 +204,16 @@ private val systemDark: StateFlow<Boolean> by lazy {
 }
 
 private fun readSystemDark(): Boolean = runCatching {
+    if (app.vertune.desktop.Paths.isWindows) {
+        // Windows' "Choose your app mode": AppsUseLightTheme is 0 in dark mode.
+        val p = ProcessBuilder(
+            "reg", "query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            "/v", "AppsUseLightTheme"
+        ).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText()
+        p.waitFor()
+        return@runCatching !out.contains("0x1")
+    }
     if (!System.getProperty("os.name").lowercase().contains("mac")) return@runCatching true
     val p = ProcessBuilder("defaults", "read", "-g", "AppleInterfaceStyle").redirectErrorStream(true).start()
     val out = p.inputStream.bufferedReader().readText()

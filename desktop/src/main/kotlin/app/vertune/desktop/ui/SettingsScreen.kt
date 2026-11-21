@@ -460,8 +460,8 @@ private fun PlayerSettings() = SettingsCategoryScreen(str("player", "Player")) {
     val scope = rememberCoroutineScope()
     SettingsGroup(
         "Phone",
-        "In the phone app, go to Settings → Database → Backup and save the file, then send it to this Mac " +
-            "(AirDrop, Google Drive, email…). This adds your favourites, playlists, lyrics and listening history."
+        "In the phone app, go to Settings → Database → Backup and save the file, then send it to this ${Paths.deviceName} " +
+            "(${if (Paths.isWindows) "Nearby Share, Google Drive" else "AirDrop, Google Drive"}, email…). This adds your favourites, playlists, lyrics and listening history."
     ) {
         SettingsEntry("Import from your phone", {
             val file = chooseFile("Choose the phone app backup", FileDialog.LOAD) ?: return@SettingsEntry
@@ -836,7 +836,7 @@ private fun OtherSettings() = SettingsCategoryScreen(str("other", "Other")) {
 @Composable
 private fun AboutSettings() = SettingsCategoryScreen(
     str("about", "About"),
-    "v${AppInfo.VERSION} for Mac, based on ViTune by Huizengek & vfsfitvnm"
+    "v${AppInfo.VERSION} for ${if (Paths.isWindows) "Windows" else "Mac"}, based on ViTune by Huizengek & vfsfitvnm"
 ) {
     SettingsGroup(str("social", "Social")) {
         SettingsEntry(str("github", "GitHub"), { openUrl(REPO_URL) }, str("view_source", "View the source code"))
