@@ -40,6 +40,8 @@ object PlayerPreferences : GlobalPreferencesHolder() {
     var isShowingSynchronizedLyrics by boolean(false)
     var isShowingWordByWordLyrics by boolean(true)
     var lyricsTextSize by int(14)
+    /** Shifts every song's synced lyrics, in ms (positive = later), on top of each song's own start offset. */
+    var lyricsGlobalOffset by long(0L)
 
     var isShowingPrevButtonCollapsed by boolean(false)
     var horizontalSwipeToClose by boolean(false)

@@ -158,6 +158,8 @@
     <string name="lyrics_offset_later">Lyrics start later in the song, so they show up later</string>
     <string name="lyrics_offset_none">Lyrics play at their normal time</string>
     <string name="lyrics_offset_use_current">Use current time</string>
+    <string name="set_lyrics_global_offset">Offset for all songs</string>
+    <string name="set_lyrics_global_offset_description">Move every song\'s synchronized lyrics earlier or later</string>
     <string name="playback_speed">Speed</string>
     <string name="playback_pitch">Pitch</string>
     <string name="playback_settings">Speed &amp; pitch</string>
