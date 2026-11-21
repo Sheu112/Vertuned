@@ -389,6 +389,8 @@ private fun LyricsOverlay(t: Track) {
         chosenMode = newMode
         runCatching { Library.saveLyricsMode(t.id, newMode) }
     }
+    // This song's own start offset (the phone's "Set start offset"), on top of the one for all songs.
+    var startTime by remember(t.id) { mutableStateOf(runCatching { Library.lyricsStart(t.id) }.getOrDefault(0L)) }
 
     // Word-by-word lyrics (NetEase, then QQ Music), looked up once per song after the rest.
     val wordText by produceState<String?>(null, t.id, lyrics, wantsSynced, wordMode) {
@@ -414,8 +416,8 @@ private fun LyricsOverlay(t: Track) {
                 style = Type.xs.medium.color(Color.White).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color.Black.copy(0.4f)).padding(8.dp)
             )
-            synced && words != null -> WordSyncedLyrics(words, height)
-            synced && lines != null -> SyncedLyrics(lines, height)
+            synced && words != null -> WordSyncedLyrics(words, height, startTime)
+            synced && lines != null -> SyncedLyrics(lines, height, startTime)
             else -> BasicText(
                 lyrics?.fixed.orEmpty(),
                 style = lyricsText().color(Color.White).copy(textAlign = TextAlign.Center),
@@ -438,20 +440,27 @@ private fun LyricsOverlay(t: Track) {
                     onPick = { menu = false; setMode(it) }
                 )
                 LyricsSizeRow()
-                LyricsTimingRow()
+                val allSongs by Settings.lyricsTimingMs.flow.collectAsState()
+                // Both rows read as "how much earlier": the song's own offset is stored like the
+                // phone's (positive = later), so it's flipped for display.
+                LyricsTimingRow("This song", -startTime) { earlier ->
+                    startTime = -earlier
+                    runCatching { Library.saveLyricsStart(t.id, -earlier) }
+                }
+                LyricsTimingRow("All songs", allSongs) { Settings.lyricsTimingMs.value = it }
             }
         }
     }
 }
 
 @Composable
-private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
+private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp, startTime: Long) {
     val palette = LocalPalette.current
     // On Windows, lines change on the exact frame (like the phone) instead of at the next of
     // the player's position updates, which come only 4 times a second. The Mac is left as it was.
     val reported by PlayerController.positionMs.collectAsState()
     val position = if (app.vertune.desktop.Paths.isWindows) smoothPosition() else reported
-    val lead = lyricsLead()
+    val lead = lyricsLead(startTime)
     val index = lines.indexOfLast { it.first <= position + lead }.coerceAtLeast(-1)
     FollowingLyricsList(lines, index, height) {
         itemsIndexed(lines) { i, (_, line) ->
@@ -531,10 +540,10 @@ private fun smoothPosition(): Long {
 
 /** Like [SyncedLyrics], but the current line lights up word by word as it's sung. */
 @Composable
-private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
+private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp, startTime: Long) {
     val palette = LocalPalette.current
     val position = smoothPosition()
-    val lead = lyricsLead()
+    val lead = lyricsLead(startTime)
 
     val lines = lyrics.lines
     val index = lines.indexOfLast { it.start <= position + lead }.coerceAtLeast(-1)
@@ -717,9 +726,9 @@ private val PRESS_OFFSET = 8.dp
 private val LYRICS_LEAD_MS = if (app.vertune.desktop.Paths.isWindows) 400L else 50L
 
 @Composable
-private fun lyricsLead(): Long {
+private fun lyricsLead(startTime: Long): Long {
     val extra by Settings.lyricsTimingMs.flow.collectAsState()
-    return LYRICS_LEAD_MS + extra
+    return LYRICS_LEAD_MS + extra - startTime
 }
 
 // How a song's lyrics are shown, saved per song (same numbers as the phone's LyricsMode).
@@ -803,38 +812,38 @@ private fun LyricsSizeRow() {
     }
 }
 
-/** "Timing": shows synced lyrics earlier or later in 0.1 s steps, for every song. */
+/** Shows synced lyrics earlier or later in 0.1 s steps; click the value to reset it. */
 @Composable
-private fun LyricsTimingRow() {
+private fun LyricsTimingRow(label: String, earlierMs: Long, onChange: (Long) -> Unit) {
     val palette = LocalPalette.current
-    val timing by Settings.lyricsTimingMs.flow.collectAsState()
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+        modifier = Modifier.width(330.dp).padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        BasicText("Timing", style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
+        BasicText(label, style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
         @Composable
-        fun step(label: String, delta: Long) {
+        fun step(text: String, delta: Long) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
                     .background(palette.background2)
-                    .clickable { Settings.lyricsTimingMs.value = (timing + delta).coerceIn(-TIMING_LIMIT_MS, TIMING_LIMIT_MS) }
+                    .clickable { onChange((earlierMs + delta).coerceIn(-TIMING_LIMIT_MS, TIMING_LIMIT_MS)) }
                     .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
-                BasicText(label, style = Type.xs.semiBold.color(palette.text))
+                BasicText(text, style = Type.xs.semiBold.color(palette.text))
             }
         }
         step("Later", -TIMING_STEP_MS)
         Box(
-            Modifier.width(64.dp).clickable { Settings.lyricsTimingMs.value = 0L },
+            Modifier.width(96.dp).clickable { onChange(0L) },
             contentAlignment = Alignment.Center
         ) {
             BasicText(
                 when {
-                    timing == 0L -> "Normal"
-                    else -> "%+.1f s".format(java.util.Locale.ROOT, timing / 1000f)
+                    earlierMs == 0L -> "Normal"
+                    earlierMs > 0 -> "%.1f s earlier".format(java.util.Locale.ROOT, earlierMs / 1000f)
+                    else -> "%.1f s later".format(java.util.Locale.ROOT, -earlierMs / 1000f)
                 },
                 style = Type.xs.medium.color(palette.textSecondary)
             )

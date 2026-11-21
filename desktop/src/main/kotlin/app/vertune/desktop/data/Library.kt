@@ -71,6 +71,8 @@ object Library {
                 if ("word" !in columns(st, "main", "Lyrics")) st.executeUpdate("ALTER TABLE Lyrics ADD COLUMN word TEXT")
                 // How each song's lyrics are shown (0 unsynced, 1 line-by-line, 2 word-by-word), like the phone.
                 if ("mode" !in columns(st, "main", "Lyrics")) st.executeUpdate("ALTER TABLE Lyrics ADD COLUMN mode INTEGER")
+                // Each song's lyrics start offset in ms (positive = later), the phone's startTime column.
+                if ("startTime" !in columns(st, "main", "Lyrics")) st.executeUpdate("ALTER TABLE Lyrics ADD COLUMN startTime INTEGER")
                 st.executeUpdate(
                     "CREATE TABLE IF NOT EXISTS SearchQuery (query TEXT PRIMARY KEY NOT NULL, at INTEGER NOT NULL)"
                 )
@@ -358,6 +360,25 @@ object Library {
                 } else null
             }
         }
+
+    /** This song's lyrics start offset in ms: positive shows them later, negative earlier (like the phone). */
+    @Synchronized
+    fun lyricsStart(songId: String): Long =
+        connection.prepareStatement("SELECT startTime FROM Lyrics WHERE songId = ?").use { st ->
+            st.setString(1, songId)
+            st.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else 0L }
+        }
+
+    @Synchronized
+    fun saveLyricsStart(songId: String, startMs: Long) {
+        connection.prepareStatement(
+            "INSERT INTO Lyrics (songId, startTime) VALUES (?, ?) ON CONFLICT(songId) DO UPDATE SET startTime = excluded.startTime"
+        ).use { st ->
+            st.setString(1, songId)
+            st.setLong(2, startMs)
+            st.executeUpdate()
+        }
+    }
 
     @Synchronized
     fun saveLyricsMode(songId: String, mode: Int) {
@@ -647,7 +668,7 @@ object Library {
                 }
                 if (phoneHas("Lyrics")) runCatching {
                     val phoneCols = columns(st, "phone", "Lyrics")
-                    val cols = (listOf("songId", "fixed", "synced") + listOf("word", "mode").filter { it in phoneCols }).joinToString(", ")
+                    val cols = (listOf("songId", "fixed", "synced") + listOf("word", "mode", "startTime").filter { it in phoneCols }).joinToString(", ")
                     st.executeUpdate("INSERT OR IGNORE INTO Lyrics ($cols) SELECT $cols FROM phone.Lyrics")
                 }
                 if (phoneHas("SearchQuery")) runCatching {
