@@ -56,7 +56,7 @@ data class WordLyrics(val lines: List<Line>) {
             }
         }
 
-        private inline fun parse(text: String?, words: (String) -> List<Word>): WordLyrics? {
+        private fun parse(text: String?, words: (String) -> List<Word>): WordLyrics? {
             if (text.isNullOrBlank()) return null
             val lines = text.lineSequence().mapNotNull { raw ->
                 val line = raw.trim('\r')
