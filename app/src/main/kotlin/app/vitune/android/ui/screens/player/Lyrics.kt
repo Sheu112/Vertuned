@@ -132,8 +132,10 @@ import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
-// Lyrics show this many ms early, the same small lead the Mac app uses.
-private const val UPDATE_DELAY = 50L
+// Lyrics run this many ms ahead of the audio. The phone's player reports exactly what you hear,
+// while the Mac's sound output reports a little ahead of it, so the phone needs a bigger lead to
+// feel the same: words light up just as they're sung rather than a beat after.
+private const val UPDATE_DELAY = 250L
 
 /** Lyrics text sizes offered in the lyrics menu (14 is the original size). */
 private val LYRICS_SIZES = listOf(
