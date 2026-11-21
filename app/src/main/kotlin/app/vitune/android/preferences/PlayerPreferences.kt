@@ -42,6 +42,8 @@ object PlayerPreferences : GlobalPreferencesHolder() {
     var lyricsTextSize by int(14)
     /** Shifts every song's synced lyrics, in ms (positive = later), on top of each song's own start offset. */
     var lyricsGlobalOffset by long(0L)
+    /** How long each word takes to fade in, as a % of the time it's sung (0 = lights up at once). */
+    var lyricsWordFade by int(100)
 
     var isShowingPrevButtonCollapsed by boolean(false)
     var horizontalSwipeToClose by boolean(false)

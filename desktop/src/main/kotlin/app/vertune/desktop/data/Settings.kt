@@ -104,6 +104,8 @@ object Settings {
     /** Lyrics text size in points (picked in the lyrics menu). */
     /** Extra lead for synced lyrics in ms, set from the lyrics menu (positive shows them earlier). */
     val lyricsTimingMs = long("lyricsTimingMs", 0L)
+    /** How long each word takes to fade in, as a % of the time it's sung (0 = lights up at once). */
+    val lyricsWordFade = int("lyricsWordFade", 100)
     val lyricsTextSize = int("player.lyricsTextSize", 16)
     val persistentQueue = boolean("player.persistentQueue", true)
     val skipOnError = boolean("player.skipOnError", false)

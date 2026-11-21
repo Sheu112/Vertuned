@@ -448,6 +448,7 @@ private fun LyricsOverlay(t: Track) {
                     runCatching { Library.saveLyricsStart(t.id, -earlier) }
                 }
                 LyricsTimingRow("All songs", allSongs) { Settings.lyricsTimingMs.value = it }
+                if (synced && words != null) WordFadeRow()
             }
         }
     }
@@ -549,25 +550,27 @@ private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp, startTime: Long) {
     val index = lines.indexOfLast { it.start <= position + lead }.coerceAtLeast(-1)
     // Words fill in with the lead too on Windows; on the Mac they keep following the plain
     // position as before (plus any Timing change from the menu).
+    val fade by Settings.lyricsWordFade.flow.collectAsState()
     val wordNow = position + if (app.vertune.desktop.Paths.isWindows) lead else lead - LYRICS_LEAD_MS
     FollowingLyricsList(lines, index, height) {
         itemsIndexed(lines) { i, line ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
             val style = lyricsText().copy(textAlign = TextAlign.Center)
             val modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
-            if (i == index) BasicText(wordLine(line, wordNow, Color.White, palette.textDisabled), style = style, modifier = modifier)
+            if (i == index) BasicText(wordLine(line, wordNow, Color.White, palette.textDisabled, fade), style = style, modifier = modifier)
             else BasicText(line.text, style = style.color(color), modifier = modifier)
         }
     }
 }
 
 /** The line's words, each brightening from [unsung] to [sung] over its own duration. */
-private fun wordLine(line: WordLyrics.Line, now: Long, sung: Color, unsung: Color) = buildAnnotatedString {
+private fun wordLine(line: WordLyrics.Line, now: Long, sung: Color, unsung: Color, fade: Int) = buildAnnotatedString {
     line.words.forEachIndexed { i, word ->
+        val fadeMs = word.duration * fade / 100
         val progress = when {
-            now >= word.end || word.duration <= 0 -> if (now >= word.start) 1f else 0f
             now <= word.start -> 0f
-            else -> (now - word.start).toFloat() / word.duration
+            now >= word.start + fadeMs || fadeMs <= 0 -> 1f
+            else -> (now - word.start).toFloat() / fadeMs
         }
         var text = word.text
         if (i == 0) text = text.trimStart()
@@ -851,6 +854,42 @@ private fun LyricsTimingRow(label: String, earlierMs: Long, onChange: (Long) -> 
         step("Earlier", TIMING_STEP_MS)
     }
 }
+
+/** "Word fade": how quickly each word lights up in word-by-word lyrics. */
+@Composable
+private fun WordFadeRow() {
+    val palette = LocalPalette.current
+    val fade by Settings.lyricsWordFade.flow.collectAsState()
+    val index = WORD_FADES.indexOfFirst { it.second == fade }.let { if (it < 0) WORD_FADES.lastIndex else it }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.width(330.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        BasicText("Word fade", style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
+        @Composable
+        fun step(text: String, delta: Int) {
+            val target = WORD_FADES.getOrNull(index + delta)
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(palette.background2)
+                    .clickable(enabled = target != null) { target?.let { Settings.lyricsWordFade.value = it.second } }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                BasicText(text, style = Type.xs.semiBold.color(if (target != null) palette.text else palette.textDisabled))
+            }
+        }
+        step("Faster", -1)
+        Box(Modifier.width(96.dp), contentAlignment = Alignment.Center) {
+            BasicText(WORD_FADES[index].first, style = Type.xs.medium.color(palette.textSecondary))
+        }
+        step("Slower", 1)
+    }
+}
+
+// Word fade choices: name and how long the fade lasts as a % of the word's sung time.
+private val WORD_FADES = listOf("Instant" to 0, "Quick" to 25, "Medium" to 50, "Smooth" to 100)
 
 private const val TIMING_STEP_MS = 100L
 private const val TIMING_LIMIT_MS = 3_000L
