@@ -17,14 +17,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -37,8 +37,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -48,9 +48,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -110,6 +114,8 @@ import app.vitune.providers.wordsync.LyricsCredits
 import app.vitune.providers.wordsync.WordLyrics
 import app.vitune.providers.wordsync.WordSync
 import com.valentinilk.shimmer.shimmer
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.CancellationException
@@ -119,8 +125,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 
 private const val UPDATE_DELAY = 50L
 
@@ -491,6 +495,19 @@ fun Lyrics(
             }
         }
 
+        // Synced lyrics follow the current line until you scroll them yourself; then a
+        // "Back to current line" button appears.
+        var followLyrics by remember(mediaId, showSynchronizedLyrics) { mutableStateOf(true) }
+        val userScroll = remember(mediaId, showSynchronizedLyrics) {
+            object : NestedScrollConnection {
+                // Only scrolls made by your finger come through here, not the automatic ones.
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    if (available.y != 0f) followLyrics = false
+                    return Offset.Zero
+                }
+            }
+        }
+
         AnimatedContent(
             targetState = showSynchronizedLyrics,
             transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -498,11 +515,11 @@ fun Lyrics(
         ) { synchronized ->
             val lazyListState = rememberLazyListState()
             if (synchronized) {
-                LaunchedEffect(synchronizedLyrics, density, animatedHeight) {
+                LaunchedEffect(synchronizedLyrics, density, animatedHeight, followLyrics) {
                     val currentSynchronizedLyrics = synchronizedLyrics ?: return@LaunchedEffect
                     val centerOffset = with(density) { (-animatedHeight / 3).roundToPx() }
 
-                    lazyListState.animateScrollToItem(
+                    if (followLyrics) lazyListState.animateScrollToItem(
                         index = currentSynchronizedLyrics.index + 1,
                         scrollOffset = centerOffset
                     )
@@ -510,7 +527,7 @@ fun Lyrics(
                     while (true) {
                         delay(UPDATE_DELAY.milliseconds)
                         if (wordLyrics != null) wordPosition = currentPosition()
-                        if (!currentSynchronizedLyrics.update()) continue
+                        if (!currentSynchronizedLyrics.update() || !followLyrics) continue
 
                         lazyListState.animateScrollToItem(
                             index = currentSynchronizedLyrics.index + 1,
@@ -521,10 +538,10 @@ fun Lyrics(
 
                 if (synchronizedLyrics != null) LazyColumn(
                     state = lazyListState,
-                    userScrollEnabled = false,
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier
+                        .nestedScroll(userScroll)
                         .verticalFadingEdge()
                         .fillMaxWidth()
                 ) {
@@ -573,6 +590,36 @@ fun Lyrics(
                     .fillMaxWidth()
                     .padding(vertical = maxHeight / 4, horizontal = 32.dp)
             )
+        }
+
+        AnimatedVisibility(
+            visible = !followLyrics && showSynchronizedLyrics,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(alpha = 0.18f))
+                    .clickable { followLyrics = true }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.sync),
+                    contentDescription = null,
+                    colorFilter = ColorFilter.tint(Color.White),
+                    modifier = Modifier.size(14.dp)
+                )
+                BasicText(
+                    text = stringResource(R.string.lyrics_back_to_line),
+                    style = typography.xs.semiBold.color(Color.White)
+                )
+            }
         }
 
         if (text == null && !error) Column(

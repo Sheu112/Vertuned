@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -53,6 +54,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
@@ -430,14 +435,6 @@ private fun LyricsOverlay(t: Track) {
                     onPick = { menu = false; setMode(it) }
                 )
                 LyricsSizeRow()
-                if (synced) {
-                    val follow by Settings.lyricsFollowLine.flow.collectAsState()
-                    MenuItem(
-                        if (follow) str("lyrics_scroll_freely", "Scroll lyrics freely")
-                        else str("lyrics_follow_line", "Follow the current line"),
-                        "sync"
-                    ) { menu = false; Settings.lyricsFollowLine.value = !follow }
-                }
             }
         }
     }
@@ -448,12 +445,7 @@ private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
     val palette = LocalPalette.current
     val position by PlayerController.positionMs.collectAsState()
     val index = lines.indexOfLast { it.first <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
-    val follow by Settings.lyricsFollowLine.flow.collectAsState()
-    val state = rememberLazyListState()
-    // Before the first line starts, keep the first line in its spot (not yet lit) so the lyrics show.
-    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
-    LazyColumn(state = state, userScrollEnabled = !follow, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
-        item { Spacer(Modifier.height(height)) }
+    FollowingLyricsList(lines, index, height) {
         itemsIndexed(lines) { i, (_, line) ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
             if (line.isBlank()) AppIcon("musical_notes", color, Modifier.padding(vertical = 4.dp, horizontal = 32.dp), size = 16.dp)
@@ -463,7 +455,48 @@ private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
                 modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
             )
         }
-        item { Spacer(Modifier.height(height)) }
+    }
+}
+
+/**
+ * The synced lyrics list. It keeps the current line in view until you scroll it yourself;
+ * then it stays where you put it and a "Back to current line" button appears.
+ */
+@Composable
+private fun FollowingLyricsList(key: Any, index: Int, height: Dp, items: LazyListScope.() -> Unit) {
+    val state = rememberLazyListState()
+    var follow by remember(key) { mutableStateOf(true) }
+    // Only scrolls you make go through here (wheel, trackpad, dragging), not the automatic ones.
+    val userScroll = remember(key) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y != 0f) follow = false
+                return Offset.Zero
+            }
+        }
+    }
+    // Before the first line starts, keep the first line in its spot (not yet lit) so the lyrics show.
+    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
+    Box(Modifier.fillMaxSize().nestedScroll(userScroll)) {
+        LazyColumn(state = state, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
+            item { Spacer(Modifier.height(height)) }
+            items()
+            item { Spacer(Modifier.height(height)) }
+        }
+        AnimatedVisibility(!follow, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White.copy(alpha = 0.18f))
+                    .clickable { follow = true }
+                    .padding(horizontal = 12.dp, vertical = 7.dp)
+            ) {
+                AppIcon("sync", Color.White, size = 14.dp)
+                BasicText(str("lyrics_back_to_line", "Back to current line"), style = Type.xs.semiBold.color(Color.White))
+            }
+        }
     }
 }
 
@@ -488,12 +521,7 @@ private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
 
     val lines = lyrics.lines
     val index = lines.indexOfLast { it.start <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
-    val follow by Settings.lyricsFollowLine.flow.collectAsState()
-    val state = rememberLazyListState()
-    // Before the first line starts, keep the first line in its spot (not yet lit) so the lyrics show.
-    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
-    LazyColumn(state = state, userScrollEnabled = !follow, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
-        item { Spacer(Modifier.height(height)) }
+    FollowingLyricsList(lines, index, height) {
         itemsIndexed(lines) { i, line ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
             val style = lyricsText().copy(textAlign = TextAlign.Center)
@@ -501,7 +529,6 @@ private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
             if (i == index) BasicText(wordLine(line, position, Color.White, palette.textDisabled), style = style, modifier = modifier)
             else BasicText(line.text, style = style.color(color), modifier = modifier)
         }
-        item { Spacer(Modifier.height(height)) }
     }
 }
 
