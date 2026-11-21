@@ -486,12 +486,17 @@ fun Lyrics(
             }
         }
 
-        val currentPosition = {
+        val rawPosition = {
             binder?.player?.let { player ->
                 player.currentPosition + UPDATE_DELAY + lyricsState.offset -
                     (lyrics?.startTime ?: 0L)
             } ?: 0L
         }
+        // The player only refreshes its position every so often, so reading it each frame gives
+        // a position that sits still and then jumps. This clock runs smoothly between those
+        // refreshes (like the Mac app) and only snaps to the player after a seek or a pause.
+        val clock = remember { LyricsClock() }
+        val currentPosition = { clock.position }
         // Updated every tick while word-by-word lyrics are showing, to light up the words.
         var wordPosition by remember { mutableLongStateOf(0L) }
 
@@ -525,6 +530,17 @@ fun Lyrics(
                 LaunchedEffect(synchronizedLyrics, density, animatedHeight, followLyrics) {
                     val currentSynchronizedLyrics = synchronizedLyrics ?: return@LaunchedEffect
                     val centerOffset = with(density) { (-animatedHeight / 3).roundToPx() }
+                    val tick = {
+                        val player = binder?.player
+                        clock.tick(
+                            raw = rawPosition(),
+                            playing = player?.isPlaying == true,
+                            speed = player?.playbackParameters?.speed ?: 1f
+                        )
+                    }
+                    tick()
+                    currentSynchronizedLyrics.update()
+                    if (wordLyrics != null) wordPosition = currentPosition()
 
                     if (followLyrics) lazyListState.slideToItem(
                         index = currentSynchronizedLyrics.index + 1,
@@ -535,6 +551,7 @@ fun Lyrics(
                     // change on time and words brighten smoothly instead of in steps.
                     while (true) {
                         withFrameMillis { }
+                        tick()
                         if (wordLyrics != null) wordPosition = currentPosition()
                         if (!currentSynchronizedLyrics.update() || !followLyrics) continue
 
@@ -991,4 +1008,47 @@ private suspend fun LazyListState.slideToItem(index: Int, offset: Int) {
         animateScrollBy(guess.toFloat(), tween(1100, easing = FastOutSlowInEasing))
     }
     animateScrollToItem(index, offset)
+}
+
+/**
+ * A playback position that moves every frame. It follows the player's own clock while playing
+ * and only jumps back to the player's reported position when the two drift apart (a seek,
+ * a pause, a stall), so word-by-word highlighting brightens smoothly.
+ */
+private class LyricsClock {
+    var position = 0L
+        private set
+    private var anchorPosition = 0L
+    private var anchorNanos = 0L
+    private var started = false
+    private var lastRaw = Long.MIN_VALUE
+
+    fun tick(raw: Long, playing: Boolean, speed: Float) {
+        val now = System.nanoTime()
+        if (!started || !playing) {
+            snap(raw, now)
+            started = playing
+            lastRaw = raw
+            return
+        }
+        val predicted = anchorPosition + ((now - anchorNanos) / 1_000_000 * speed).toLong()
+        val error = raw - predicted
+        when {
+            kotlin.math.abs(error) > 250 -> snap(raw, now)
+            raw != lastRaw -> {
+                // A fresh reading from the player: drift gently toward it so we never fall out
+                // of step over a long song, without a visible jump.
+                anchorPosition += error / 10
+                position = predicted + error / 10
+            }
+            else -> position = predicted
+        }
+        lastRaw = raw
+    }
+
+    private fun snap(raw: Long, now: Long) {
+        anchorPosition = raw
+        anchorNanos = now
+        position = raw
+    }
 }
