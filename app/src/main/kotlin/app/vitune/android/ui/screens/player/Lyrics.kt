@@ -545,8 +545,10 @@ fun Lyrics(
                         .verticalFadingEdge()
                         .fillMaxWidth()
                 ) {
+                    // Just enough room for the first and last lines to reach the reading spot,
+                    // so scrolling stops there instead of running into empty space.
                     item(key = "header", contentType = 0) {
-                        Spacer(modifier = Modifier.height(maxHeight))
+                        Spacer(modifier = Modifier.height(maxHeight / 3))
                     }
                     itemsIndexed(
                         items = synchronizedLyrics.sentences.values.toImmutableList()
@@ -578,7 +580,7 @@ fun Lyrics(
                         )
                     }
                     item(key = "footer", contentType = 0) {
-                        Spacer(modifier = Modifier.height(maxHeight))
+                        Spacer(modifier = Modifier.height(maxHeight * 2 / 3))
                     }
                 }
             } else BasicText(

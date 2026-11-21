@@ -479,9 +479,11 @@ private fun FollowingLyricsList(key: Any, index: Int, height: Dp, items: LazyLis
     LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem(index.coerceAtLeast(0) + 1, -(height.value / 3).toInt()) }
     Box(Modifier.fillMaxSize().nestedScroll(userScroll)) {
         LazyColumn(state = state, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
-            item { Spacer(Modifier.height(height)) }
+            // Just enough room for the first and last lines to reach the reading spot (a third
+            // of the way down), so scrolling stops there instead of running into empty space.
+            item { Spacer(Modifier.height(height / 3)) }
             items()
-            item { Spacer(Modifier.height(height)) }
+            item { Spacer(Modifier.height(height * 2 / 3)) }
         }
         AnimatedVisibility(!follow, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)) {
             Row(
