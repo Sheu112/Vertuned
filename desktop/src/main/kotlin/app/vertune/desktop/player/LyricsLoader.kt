@@ -100,6 +100,8 @@ object LyricsLoader {
         if (text.isNullOrBlank()) return null
         val file = LrcParser.parse(text)?.toLrcFile() ?: return null
         val offset = file.offset?.inWholeMilliseconds ?: 0L
-        return file.lines.entries.sortedBy { it.key }.map { (it.key - offset) to it.value }.takeIf { it.isNotEmpty() }
+        val lines = file.lines.entries.sortedBy { it.key }.map { (it.key - offset) to it.value }
+        // Leave out the credit lines lyrics sites put at the top
+        return app.vitune.providers.wordsync.LyricsCredits.strip(lines) { it.second }.takeIf { it.isNotEmpty() }
     }
 }

@@ -65,6 +65,7 @@ data class WordLyrics(val lines: List<Line>) {
                 if (parsed.isEmpty()) return@mapNotNull null
                 Line(header.groupValues[1].toLong(), header.groupValues[2].toLong(), parsed)
             }.sortedBy { it.start }.distinctBy { it.start }.toList()
+                .let { all -> LyricsCredits.strip(all) { it.text } }
             // Credits-only results (just "Lyricist: …") aren't worth showing.
             return WordLyrics(lines).takeIf { lines.size >= 3 }
         }

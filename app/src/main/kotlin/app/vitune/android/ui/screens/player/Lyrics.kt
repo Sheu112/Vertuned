@@ -103,6 +103,7 @@ import app.vitune.providers.lrclib.LrcLib
 import app.vitune.providers.lrclib.LrcParser
 import app.vitune.providers.lrclib.models.Track
 import app.vitune.providers.lrclib.toLrcFile
+import app.vitune.providers.wordsync.LyricsCredits
 import app.vitune.providers.wordsync.WordLyrics
 import app.vitune.providers.wordsync.WordSync
 import com.valentinilk.shimmer.shimmer
@@ -438,7 +439,10 @@ fun Lyrics(
                 }
 
                 SynchronizedLyricsState(
-                    sentences = file?.lines,
+                    // Leave out the credit lines lyrics sites put at the top
+                    sentences = file?.lines?.let { lines ->
+                        LyricsCredits.strip(lines.entries.toList()) { it.value }.associate { it.key to it.value }
+                    },
                     offset = file?.offset?.inWholeMilliseconds ?: 0L
                 )
             }

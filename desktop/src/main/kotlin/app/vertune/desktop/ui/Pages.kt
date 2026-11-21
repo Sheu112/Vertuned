@@ -154,7 +154,8 @@ private fun CacheButton(tracks: List<Track>) {
             SongCache.precacheAll(tracks)
             app.vertune.desktop.player.LyricsLoader.prefetchAll(tracks)
         }, selected = true)
-        else -> AppIcon("download", palette.textDisabled, size = 18.dp, modifier = Modifier.padding(8.dp))
+        // Everything's saved already: a lyrics button saves any missing lyrics instead
+        else -> HeaderIconButton("text", { app.vertune.desktop.player.LyricsLoader.prefetchAll(tracks) })
     }
 }
 

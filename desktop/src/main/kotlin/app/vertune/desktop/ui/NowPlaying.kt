@@ -64,6 +64,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
 import app.vertune.desktop.data.Library
 import app.vertune.desktop.data.Settings
 import app.vertune.desktop.data.Track
@@ -396,7 +398,7 @@ private fun LyricsOverlay(t: Track) {
             synced && lines != null -> SyncedLyrics(lines, height)
             else -> BasicText(
                 lyrics?.fixed.orEmpty(),
-                style = LyricsText.color(Color.White).copy(textAlign = TextAlign.Center),
+                style = lyricsText().color(Color.White).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = height / 4, horizontal = 32.dp)
             )
         }
@@ -404,8 +406,19 @@ private fun LyricsOverlay(t: Track) {
         // The phone's lyrics menu: switch between synced and plain, or search online.
         Box(Modifier.align(Alignment.BottomEnd)) {
             var menu by remember { mutableStateOf(false) }
+            var sizeMenu by remember { mutableStateOf(false) }
             AppIconButton("ellipsis_horizontal", Color.White, { menu = true }, size = 20.dp)
+            DarkMenu(sizeMenu, { sizeMenu = false }) {
+                val current by Settings.lyricsTextSize.flow.collectAsState()
+                for ((key, fallback, size) in LYRICS_SIZES) {
+                    MenuItem((if (size == current) "✓ " else "") + str(key, fallback), null) {
+                        sizeMenu = false
+                        Settings.lyricsTextSize.value = size
+                    }
+                }
+            }
             DarkMenu(menu, { menu = false }) {
+                MenuItem(str("lyrics_text_size", "Text size"), "text") { menu = false; sizeMenu = true }
                 MenuItem(
                     if (synced) str("show_unsynchronized_lyrics", "Show unsynchronized lyrics")
                     else str("show_synchronized_lyrics", "Show synchronized lyrics"),
@@ -449,7 +462,7 @@ private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
             if (line.isBlank()) AppIcon("musical_notes", color, Modifier.padding(vertical = 4.dp, horizontal = 32.dp), size = 16.dp)
             else BasicText(
                 line,
-                style = LyricsText.color(color).copy(textAlign = TextAlign.Center),
+                style = lyricsText().color(color).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
             )
         }
@@ -486,7 +499,7 @@ private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
         item { Spacer(Modifier.height(height)) }
         itemsIndexed(lines) { i, line ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
-            val style = LyricsText.copy(textAlign = TextAlign.Center)
+            val style = lyricsText().copy(textAlign = TextAlign.Center)
             val modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
             if (i == index) BasicText(wordLine(line, position, Color.White, palette.textDisabled), style = style, modifier = modifier)
             else BasicText(line.text, style = style.color(color), modifier = modifier)
@@ -652,5 +665,21 @@ private val CONTROL_HEIGHT = 64.dp
 private val PRESS_OFFSET = 8.dp
 private const val LYRICS_LEAD_MS = 50L
 
-/** Lyrics text: a step up from the phone's size, which looked small on a big Mac window. */
-private val LyricsText get() = Type.s.medium
+/** Lyrics text at the size picked in the lyrics menu (16 by default, a step up from the phone's 14). */
+@Composable
+private fun lyricsText(): androidx.compose.ui.text.TextStyle {
+    val size by Settings.lyricsTextSize.flow.collectAsState()
+    val base = Type.s.medium
+    return base.copy(
+        fontSize = size.sp,
+        lineHeight = if (base.lineHeight.isSpecified) (size * 1.5f).sp else base.lineHeight
+    )
+}
+
+/** The lyrics text sizes offered in the menu: (label key, fallback label, size). */
+private val LYRICS_SIZES = listOf(
+    Triple("lyrics_size_small", "Small", 14),
+    Triple("lyrics_size_medium", "Medium", 16),
+    Triple("lyrics_size_large", "Large", 19),
+    Triple("lyrics_size_extra_large", "Extra large", 23)
+)

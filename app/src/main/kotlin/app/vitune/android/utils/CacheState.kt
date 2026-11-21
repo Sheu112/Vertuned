@@ -76,6 +76,17 @@ fun PlaylistDownloadIcon(
                 },
                 modifier = modifier
             )
+
+            // Everything's cached already: a lyrics button saves any missing lyrics instead
+            else -> HeaderIconButton(
+                icon = R.drawable.text,
+                color = colorPalette.text,
+                onClick = {
+                    LyricsPrefetch.prefetch(songs)
+                    context.toast(context.getString(R.string.saving_lyrics))
+                },
+                modifier = modifier
+            )
         }
     }
 }
