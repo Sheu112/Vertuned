@@ -446,7 +446,10 @@ private fun LyricsOverlay(t: Track) {
 @Composable
 private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
     val palette = LocalPalette.current
-    val position by PlayerController.positionMs.collectAsState()
+    // On Windows, lines change on the exact frame (like the phone) instead of at the next of
+    // the player's position updates, which come only 4 times a second. The Mac is left as it was.
+    val reported by PlayerController.positionMs.collectAsState()
+    val position = if (app.vertune.desktop.Paths.isWindows) smoothPosition() else reported
     val index = lines.indexOfLast { it.first <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
     FollowingLyricsList(lines, index, height) {
         itemsIndexed(lines) { i, (_, line) ->
@@ -505,13 +508,11 @@ private fun FollowingLyricsList(key: Any, index: Int, height: Dp, items: LazyLis
     }
 }
 
-/** Like [SyncedLyrics], but the current line lights up word by word as it's sung. */
+/** The player's position, moved forward every frame between its few-times-a-second updates. */
 @Composable
-private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
-    val palette = LocalPalette.current
+private fun smoothPosition(): Long {
     val reported by PlayerController.positionMs.collectAsState()
     val playing by PlayerController.isPlaying.collectAsState()
-    // The player reports its position a few times a second; fill in the frames between.
     var position by remember { mutableStateOf(reported) }
     LaunchedEffect(reported, playing) {
         val base = reported
@@ -523,6 +524,14 @@ private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
             position = base + (System.nanoTime() - since) / 1_000_000
         }
     }
+    return position
+}
+
+/** Like [SyncedLyrics], but the current line lights up word by word as it's sung. */
+@Composable
+private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
+    val palette = LocalPalette.current
+    val position = smoothPosition()
 
     val lines = lyrics.lines
     val index = lines.indexOfLast { it.start <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
@@ -695,7 +704,10 @@ private fun SleepTimerDialog(onDismiss: () -> Unit) {
 
 private val CONTROL_HEIGHT = 64.dp
 private val PRESS_OFFSET = 8.dp
-private const val LYRICS_LEAD_MS = 50L
+// Lyrics run this many ms ahead of the reported position. The Mac's sound output reports a
+// little ahead of what you hear, so it only needs a small lead. Windows reports what you hear,
+// like the phone, so it gets the phone's 250 ms lead to line up the same way.
+private val LYRICS_LEAD_MS = if (app.vertune.desktop.Paths.isWindows) 250L else 50L
 
 // How a song's lyrics are shown, saved per song (same numbers as the phone's LyricsMode).
 private const val LYRICS_MODE_UNSYNCED = 0
