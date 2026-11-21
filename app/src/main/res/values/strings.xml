@@ -132,6 +132,9 @@
     <string name="lyrics_mode_word">Word-by-word lyrics</string>
     <string name="lyrics_mode_line">Line-by-line lyrics</string>
     <string name="lyrics_mode_unsynced">Unsynchronized lyrics</string>
+    <string name="lyrics_mode_word_short">Word</string>
+    <string name="lyrics_mode_line_short">Line</string>
+    <string name="lyrics_mode_unsynced_short">Plain</string>
     <string name="lyrics_text_size">Text size</string>
     <string name="lyrics_size_small">Small</string>
     <string name="lyrics_size_medium">Medium</string>

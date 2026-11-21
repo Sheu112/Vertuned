@@ -418,34 +418,18 @@ private fun LyricsOverlay(t: Track) {
         // The phone's lyrics menu: switch between synced and plain, or search online.
         Box(Modifier.align(Alignment.BottomEnd)) {
             var menu by remember { mutableStateOf(false) }
-            var sizeMenu by remember { mutableStateOf(false) }
             AppIconButton("ellipsis_horizontal", Color.White, { menu = true }, size = 20.dp)
-            DarkMenu(sizeMenu, { sizeMenu = false }) {
-                val current by Settings.lyricsTextSize.flow.collectAsState()
-                for ((key, fallback, size) in LYRICS_SIZES) {
-                    MenuItem((if (size == current) "✓ " else "") + str(key, fallback), null) {
-                        sizeMenu = false
-                        Settings.lyricsTextSize.value = size
-                    }
-                }
-            }
             DarkMenu(menu, { menu = false }) {
-                MenuItem(str("lyrics_text_size", "Text size"), "text") { menu = false; sizeMenu = true }
-                // This song's lyrics mode, with a check next to the current one
-                val current = when {
-                    !synced -> LYRICS_MODE_UNSYNCED
-                    wordMode -> LYRICS_MODE_WORD
-                    else -> LYRICS_MODE_LINE
-                }
-                MenuItem(str("lyrics_mode_word", "Word-by-word lyrics"), "text", checked = current == LYRICS_MODE_WORD) {
-                    menu = false; setMode(LYRICS_MODE_WORD)
-                }
-                MenuItem(str("lyrics_mode_line", "Line-by-line lyrics"), "time", checked = current == LYRICS_MODE_LINE) {
-                    menu = false; setMode(LYRICS_MODE_LINE)
-                }
-                MenuItem(str("lyrics_mode_unsynced", "Unsynchronized lyrics"), "musical_notes", checked = current == LYRICS_MODE_UNSYNCED) {
-                    menu = false; setMode(LYRICS_MODE_UNSYNCED)
-                }
+                // Compact rows: this song's lyrics mode, then the text size
+                LyricsModeRow(
+                    current = when {
+                        !synced -> LYRICS_MODE_UNSYNCED
+                        wordMode -> LYRICS_MODE_WORD
+                        else -> LYRICS_MODE_LINE
+                    },
+                    onPick = { menu = false; setMode(it) }
+                )
+                LyricsSizeRow()
                 if (synced) {
                     val follow by Settings.lyricsFollowLine.flow.collectAsState()
                     MenuItem(
@@ -695,6 +679,71 @@ private fun lyricsText(): androidx.compose.ui.text.TextStyle {
         fontSize = size.sp,
         lineHeight = if (base.lineHeight.isSpecified) (size * 1.5f).sp else base.lineHeight
     )
+}
+
+/** Three side-by-side buttons for this song's lyrics mode, the current one highlighted. */
+@Composable
+private fun LyricsModeRow(current: Int, onPick: (Int) -> Unit) {
+    val palette = LocalPalette.current
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        listOf(
+            LYRICS_MODE_WORD to str("lyrics_mode_word_short", "Word"),
+            LYRICS_MODE_LINE to str("lyrics_mode_line_short", "Line"),
+            LYRICS_MODE_UNSYNCED to str("lyrics_mode_unsynced_short", "Plain")
+        ).forEach { (mode, label) ->
+            val selected = mode == current
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (selected) palette.accent else palette.background2)
+                    .clickable { onPick(mode) }
+                    .padding(vertical = 8.dp)
+            ) {
+                BasicText(label, style = Type.xs.semiBold.color(if (selected) palette.onAccent else palette.text))
+            }
+        }
+    }
+}
+
+/** "Text size" with smaller/bigger buttons; changes apply right away and the menu stays open. */
+@Composable
+private fun LyricsSizeRow() {
+    val palette = LocalPalette.current
+    val size by Settings.lyricsTextSize.flow.collectAsState()
+    val index = LYRICS_SIZES.indexOfFirst { it.third == size }.coerceAtLeast(0)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        BasicText(str("lyrics_text_size", "Text size"), style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
+        @Composable
+        fun step(label: String, delta: Int) {
+            val target = LYRICS_SIZES.getOrNull(index + delta)
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(palette.background2)
+                    .clickable(enabled = target != null) { target?.let { Settings.lyricsTextSize.value = it.third } }
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+            ) {
+                BasicText(label, style = Type.xs.semiBold.color(if (target != null) palette.text else palette.textDisabled))
+            }
+        }
+        step("A−", -1)
+        Box(Modifier.width(76.dp), contentAlignment = Alignment.Center) {
+            BasicText(
+                LYRICS_SIZES[index].let { str(it.first, it.second) },
+                style = Type.xs.medium.color(palette.textSecondary)
+            )
+        }
+        step("A+", 1)
+    }
 }
 
 /** The lyrics text sizes offered in the menu: (label key, fallback label, size). */

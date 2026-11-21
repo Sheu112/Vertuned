@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ripple
@@ -44,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.lerp
@@ -615,56 +619,19 @@ fun Lyrics(
                             onMenuLaunch()
                             menuState.display {
                                 Menu {
-                                    // This song's lyrics mode, with a check next to the current one
-                                    listOf(
-                                        Triple(LyricsMode.WORD, R.string.lyrics_mode_word, R.drawable.text),
-                                        Triple(LyricsMode.LINE, R.string.lyrics_mode_line, R.drawable.time),
-                                        Triple(LyricsMode.UNSYNCED, R.string.lyrics_mode_unsynced, R.drawable.musical_notes)
-                                    ).forEach { (entryMode, label, icon) ->
-                                        val current = when {
+                                    // Compact rows: this song's lyrics mode, then the text size
+                                    LyricsModeRow(
+                                        current = when {
                                             !shouldShowSynchronizedLyrics -> LyricsMode.UNSYNCED
                                             wordByWord -> LyricsMode.WORD
                                             else -> LyricsMode.LINE
-                                        }
-                                        MenuEntry(
-                                            icon = icon,
-                                            text = stringResource(label),
-                                            onClick = {
-                                                menuState.hide()
-                                                setMode(entryMode)
-                                            },
-                                            trailingContent = if (entryMode == current) {
-                                                {
-                                                    BasicText(
-                                                        text = "✓",
-                                                        style = typography.s.semiBold.color(colorPalette.accent)
-                                                    )
-                                                }
-                                            } else null
-                                        )
-                                    }
-
-                                    MenuEntry(
-                                        icon = R.drawable.text,
-                                        text = stringResource(R.string.lyrics_text_size),
-                                        onClick = {
-                                            menuState.display {
-                                                Menu {
-                                                    LYRICS_SIZES.forEach { (label, size) ->
-                                                        MenuEntry(
-                                                            icon = R.drawable.text,
-                                                            text = (if (size == lyricsSize) "✓ " else "") +
-                                                                stringResource(label),
-                                                            onClick = {
-                                                                menuState.hide()
-                                                                PlayerPreferences.lyricsTextSize = size
-                                                            }
-                                                        )
-                                                    }
-                                                }
-                                            }
+                                        },
+                                        onPick = {
+                                            menuState.hide()
+                                            setMode(it)
                                         }
                                     )
+                                    LyricsSizeRow()
 
                                     MenuEntry(
                                         icon = R.drawable.pencil,
@@ -866,4 +833,77 @@ private fun WordByWordLine(
         style = style,
         modifier = modifier
     )
+}
+
+/** Three side-by-side buttons for this song's lyrics mode, the current one highlighted. */
+@Composable
+private fun LyricsModeRow(current: Int, onPick: (Int) -> Unit) {
+    val (colorPalette, typography) = LocalAppearance.current
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp)
+    ) {
+        listOf(
+            LyricsMode.WORD to R.string.lyrics_mode_word_short,
+            LyricsMode.LINE to R.string.lyrics_mode_line_short,
+            LyricsMode.UNSYNCED to R.string.lyrics_mode_unsynced_short
+        ).forEach { (mode, label) ->
+            val selected = mode == current
+            BasicText(
+                text = stringResource(label),
+                style = typography.xs.semiBold.center.color(
+                    if (selected) colorPalette.onAccent else colorPalette.text
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (selected) colorPalette.accent else colorPalette.background2)
+                    .clickable { onPick(mode) }
+                    .padding(vertical = 10.dp)
+            )
+        }
+    }
+}
+
+/** "Text size" with smaller/bigger buttons; changes apply right away and the menu stays open. */
+@Composable
+private fun LyricsSizeRow() {
+    val (colorPalette, typography) = LocalAppearance.current
+    val size = PlayerPreferences.lyricsTextSize
+    val index = LYRICS_SIZES.indexOfFirst { it.second == size }.coerceAtLeast(0)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp)
+    ) {
+        BasicText(
+            text = stringResource(R.string.lyrics_text_size),
+            style = typography.s.medium.color(colorPalette.text),
+            modifier = Modifier.weight(1f)
+        )
+        listOf(-1 to "A−", 1 to "A+").forEachIndexed { i, (step, label) ->
+            val target = LYRICS_SIZES.getOrNull(index + step)
+            if (i == 1) BasicText(
+                text = stringResource(LYRICS_SIZES[index].first),
+                style = typography.xs.medium.center.color(colorPalette.textSecondary),
+                modifier = Modifier.width(88.dp)
+            )
+            BasicText(
+                text = label,
+                style = typography.s.semiBold.center.color(
+                    if (target != null) colorPalette.text else colorPalette.textDisabled
+                ),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(colorPalette.background2)
+                    .clickable(enabled = target != null) {
+                        target?.let { PlayerPreferences.lyricsTextSize = it.second }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            )
+        }
+    }
 }
