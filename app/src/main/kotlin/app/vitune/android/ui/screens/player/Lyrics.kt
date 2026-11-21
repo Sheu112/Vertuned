@@ -973,7 +973,10 @@ private suspend fun LazyListState.slideToItem(index: Int, offset: Int) {
     val visible = layoutInfo.visibleItemsInfo
     val target = visible.firstOrNull { it.index == index }
     if (target != null) {
-        animateScrollBy((target.offset + offset).toFloat(), tween(450, easing = FastOutSlowInEasing))
+        // Longer trips take longer, so a jump back from far away is an easy glide.
+        val distance = (target.offset + offset).toFloat()
+        val duration = (450 + kotlin.math.abs(distance) / 2).toInt().coerceAtMost(1100)
+        animateScrollBy(distance, tween(duration, easing = FastOutSlowInEasing))
         return
     }
     if (visible.isNotEmpty()) {
@@ -981,7 +984,7 @@ private suspend fun LazyListState.slideToItem(index: Int, offset: Int) {
         val average = visible.sumOf { it.size } / visible.size
         val first = visible.first()
         val guess = (index - first.index) * average - (-first.offset) + offset
-        animateScrollBy(guess.toFloat(), tween(550, easing = FastOutSlowInEasing))
+        animateScrollBy(guess.toFloat(), tween(1100, easing = FastOutSlowInEasing))
     }
     animateScrollToItem(index, offset)
 }
