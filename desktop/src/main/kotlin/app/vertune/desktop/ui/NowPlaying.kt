@@ -396,7 +396,7 @@ private fun LyricsOverlay(t: Track) {
             synced && lines != null -> SyncedLyrics(lines, height)
             else -> BasicText(
                 lyrics?.fixed.orEmpty(),
-                style = Type.xs.medium.color(Color.White).copy(textAlign = TextAlign.Center),
+                style = LyricsText.color(Color.White).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = height / 4, horizontal = 32.dp)
             )
         }
@@ -416,6 +416,14 @@ private fun LyricsOverlay(t: Track) {
                     else str("show_word_by_word_lyrics", "Show word-by-word lyrics"),
                     "text"
                 ) { menu = false; Settings.showWordLyrics.value = !wordMode }
+                if (synced) {
+                    val follow by Settings.lyricsFollowLine.flow.collectAsState()
+                    MenuItem(
+                        if (follow) str("lyrics_scroll_freely", "Scroll lyrics freely")
+                        else str("lyrics_follow_line", "Follow the current line"),
+                        "sync"
+                    ) { menu = false; Settings.lyricsFollowLine.value = !follow }
+                }
                 MenuItem(str("search_lyrics_online", "Search lyrics online"), "search") {
                     menu = false
                     openUrl("https://www.google.com/search?q=" + java.net.URLEncoder.encode("${t.title} ${t.artists.orEmpty()} lyrics", "UTF-8"))
@@ -430,16 +438,17 @@ private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
     val palette = LocalPalette.current
     val position by PlayerController.positionMs.collectAsState()
     val index = lines.indexOfLast { it.first <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
+    val follow by Settings.lyricsFollowLine.flow.collectAsState()
     val state = rememberLazyListState()
-    LaunchedEffect(index) { state.animateScrollToItem((index + 1).coerceAtLeast(0), -(height.value / 3).toInt()) }
-    LazyColumn(state = state, userScrollEnabled = false, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
+    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem((index + 1).coerceAtLeast(0), -(height.value / 3).toInt()) }
+    LazyColumn(state = state, userScrollEnabled = !follow, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
         item { Spacer(Modifier.height(height)) }
         itemsIndexed(lines) { i, (_, line) ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
-            if (line.isBlank()) AppIcon("musical_notes", color, Modifier.padding(vertical = 4.dp, horizontal = 32.dp), size = 14.dp)
+            if (line.isBlank()) AppIcon("musical_notes", color, Modifier.padding(vertical = 4.dp, horizontal = 32.dp), size = 16.dp)
             else BasicText(
                 line,
-                style = Type.xs.medium.color(color).copy(textAlign = TextAlign.Center),
+                style = LyricsText.color(color).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
             )
         }
@@ -468,13 +477,14 @@ private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
 
     val lines = lyrics.lines
     val index = lines.indexOfLast { it.start <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
+    val follow by Settings.lyricsFollowLine.flow.collectAsState()
     val state = rememberLazyListState()
-    LaunchedEffect(index) { state.animateScrollToItem((index + 1).coerceAtLeast(0), -(height.value / 3).toInt()) }
-    LazyColumn(state = state, userScrollEnabled = false, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
+    LaunchedEffect(index, follow) { if (follow) state.animateScrollToItem((index + 1).coerceAtLeast(0), -(height.value / 3).toInt()) }
+    LazyColumn(state = state, userScrollEnabled = !follow, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
         item { Spacer(Modifier.height(height)) }
         itemsIndexed(lines) { i, line ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
-            val style = Type.xs.medium.copy(textAlign = TextAlign.Center)
+            val style = LyricsText.copy(textAlign = TextAlign.Center)
             val modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
             if (i == index) BasicText(wordLine(line, position, Color.White, palette.textDisabled), style = style, modifier = modifier)
             else BasicText(line.text, style = style.color(color), modifier = modifier)
@@ -639,3 +649,6 @@ private fun SleepTimerDialog(onDismiss: () -> Unit) {
 private val CONTROL_HEIGHT = 64.dp
 private val PRESS_OFFSET = 8.dp
 private const val LYRICS_LEAD_MS = 50L
+
+/** Lyrics text: a step up from the phone's size, which looked small on a big Mac window. */
+private val LyricsText get() = Type.s.medium
