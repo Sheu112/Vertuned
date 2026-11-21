@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.prefs.Preferences
 
-/** Small settings, kept in the macOS preferences system (~/Library/Preferences). */
+/** Small settings, kept in the system's preferences store (~/Library/Preferences on a Mac, the registry on Windows). */
 object Settings {
     private val prefs: Preferences = Preferences.userRoot().node("app/vertune/desktop")
 
@@ -102,6 +102,10 @@ object Settings {
     /** Synced lyrics keep the current line in view (true) or can be scrolled freely (false). */
     val lyricsFollowLine = boolean("player.lyricsFollowLine", true)
     /** Lyrics text size in points (picked in the lyrics menu). */
+    /** Extra lead for synced lyrics in ms, set from the lyrics menu (positive shows them earlier). */
+    val lyricsTimingMs = long("lyricsTimingMs", 0L)
+    /** How long each word takes to fade in, as a % of the time it's sung (0 = lights up at once). */
+    val lyricsWordFade = int("lyricsWordFade", 100)
     val lyricsTextSize = int("player.lyricsTextSize", 16)
     val persistentQueue = boolean("player.persistentQueue", true)
     val skipOnError = boolean("player.skipOnError", false)

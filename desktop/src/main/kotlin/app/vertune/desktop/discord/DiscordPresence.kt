@@ -272,7 +272,7 @@ class DiscordPresence(
                     JSONObject()
                         .put("os", "Android")
                         .put("browser", "Discord Android")
-                        .put("device", "Vertune for Mac")
+                        .put("device", if (app.vertune.desktop.Paths.isWindows) "Vertune for Windows" else "Vertune for Mac")
                 )
         )
 

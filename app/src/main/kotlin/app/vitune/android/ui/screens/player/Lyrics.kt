@@ -196,6 +196,7 @@ fun Lyrics(
         lyrics?.let { current -> query { Database.upsert(current.copy(mode = newMode)) } }
     }
     var adjustingOffset by remember(mediaId) { mutableStateOf(false) }
+    var adjustingGlobalOffset by remember { mutableStateOf(false) }
     val lyricsSize = PlayerPreferences.lyricsTextSize
     val lyricsStyle = typography.xs.copy(fontSize = lyricsSize.sp).center.medium
     val wordLyrics = remember(lyrics?.word, wordByWord) {
@@ -393,6 +394,14 @@ fun Lyrics(
         onDismiss = { adjustingOffset = false }
     )
 
+    if (adjustingGlobalOffset) LyricsOffsetDialog(
+        startTime = PlayerPreferences.lyricsGlobalOffset,
+        currentPosition = null,
+        onChange = { PlayerPreferences.lyricsGlobalOffset = it },
+        onDismiss = { adjustingGlobalOffset = false },
+        title = stringResource(R.string.set_lyrics_global_offset)
+    )
+
     if (picking && shouldShowSynchronizedLyrics) {
         var query by rememberSaveable {
             mutableStateOf(
@@ -503,7 +512,7 @@ fun Lyrics(
         val rawPosition = {
             binder?.player?.let { player ->
                 player.currentPosition + UPDATE_DELAY + lyricsState.offset -
-                    (lyrics?.startTime ?: 0L)
+                    (lyrics?.startTime ?: 0L) - PlayerPreferences.lyricsGlobalOffset
             } ?: 0L
         }
         // The player only refreshes its position every so often, so reading it each frame gives
@@ -724,6 +733,7 @@ fun Lyrics(
                                         }
                                     )
                                     LyricsSizeRow()
+                                    if (wordByWord) WordFadeRow()
 
                                     MenuEntry(
                                         icon = R.drawable.pencil,
@@ -784,6 +794,17 @@ fun Lyrics(
                                             onClick = {
                                                 menuState.hide()
                                                 adjustingOffset = true
+                                            }
+                                        )
+                                        MenuEntry(
+                                            icon = R.drawable.play_skip_forward,
+                                            text = stringResource(R.string.set_lyrics_global_offset),
+                                            secondaryText = stringResource(
+                                                R.string.set_lyrics_global_offset_description
+                                            ),
+                                            onClick = {
+                                                menuState.hide()
+                                                adjustingGlobalOffset = true
                                             }
                                         )
                                     }
@@ -898,14 +919,15 @@ private fun WordByWordLine(
     modifier: Modifier = Modifier
 ) {
     val now = position()
-    val text = remember(line, now) {
+    val fade = PlayerPreferences.lyricsWordFade
+    val text = remember(line, now, fade) {
         buildAnnotatedString {
             line.words.forEachIndexed { i, word ->
+                val fadeMs = word.duration * fade / 100
                 val progress = when {
-                    now >= word.end -> 1f
                     now <= word.start -> 0f
-                    word.duration <= 0 -> 1f
-                    else -> (now - word.start).toFloat() / word.duration
+                    now >= word.start + fadeMs || fadeMs <= 0 -> 1f
+                    else -> (now - word.start).toFloat() / fadeMs
                 }
                 val wordText = if (i == 0) word.text.trimStart() else word.text
                 withStyle(SpanStyle(color = lerp(unsungColor, sungColor, progress))) {
@@ -995,6 +1017,50 @@ private fun LyricsSizeRow() {
     }
 }
 
+/** "Word fade": how quickly each word lights up in word-by-word lyrics. */
+@Composable
+private fun WordFadeRow() {
+    val (colorPalette, typography) = LocalAppearance.current
+    val fade = PlayerPreferences.lyricsWordFade
+    val index = WORD_FADES.indexOfFirst { it.second == fade }.let { if (it < 0) WORD_FADES.lastIndex else it }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp)
+    ) {
+        BasicText(
+            text = "Word fade",
+            style = typography.s.medium.color(colorPalette.text),
+            modifier = Modifier.weight(1f)
+        )
+        listOf(-1 to "Faster", 1 to "Slower").forEachIndexed { i, (step, label) ->
+            val target = WORD_FADES.getOrNull(index + step)
+            if (i == 1) BasicText(
+                text = WORD_FADES[index].first,
+                style = typography.xs.medium.center.color(colorPalette.textSecondary),
+                modifier = Modifier.width(72.dp)
+            )
+            BasicText(
+                text = label,
+                style = typography.xs.semiBold.center.color(
+                    if (target != null) colorPalette.text else colorPalette.textDisabled
+                ),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(colorPalette.background2)
+                    .clickable(enabled = target != null) {
+                        target?.let { PlayerPreferences.lyricsWordFade = it.second }
+                    }
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            )
+        }
+    }
+}
+
+// Word fade choices: name and how long the fade lasts as a % of the word's sung time.
+private val WORD_FADES = listOf("Instant" to 0, "Quick" to 25, "Medium" to 50, "Smooth" to 100)
+
 /**
  * Slides the list so item [index] sits [offset] px into it (negative = further down), even when
  * that item is far off screen; plain animateScrollToItem jumps most of the way in that case.
@@ -1070,15 +1136,16 @@ private class LyricsClock {
 @Composable
 private fun LyricsOffsetDialog(
     startTime: Long,
-    currentPosition: () -> Long,
+    currentPosition: (() -> Long)?,
     onChange: (Long) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    title: String = stringResource(R.string.set_lyrics_start_offset)
 ) {
     val (colorPalette, typography) = LocalAppearance.current
     var value by remember { mutableLongStateOf(startTime) }
     val set: (Long) -> Unit = { value = it; onChange(it) }
 
-    SliderDialog(onDismiss = onDismiss, title = stringResource(R.string.set_lyrics_start_offset)) {
+    SliderDialog(onDismiss = onDismiss, title = title) {
         BasicText(
             text = "%+.1f s".format(java.util.Locale.ROOT, value / 1000f),
             style = typography.xxl.semiBold.center.color(colorPalette.text),
@@ -1122,7 +1189,8 @@ private fun LyricsOffsetDialog(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(horizontal = 16.dp)
         ) {
-            DialogTextButton(
+            // "Use current time" only makes sense for one song.
+            if (currentPosition != null) DialogTextButton(
                 text = stringResource(R.string.lyrics_offset_use_current),
                 onClick = { set(currentPosition()) }
             )

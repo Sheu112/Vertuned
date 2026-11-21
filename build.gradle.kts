@@ -21,9 +21,13 @@ tasks.register<Delete>("clean") {
 
 val topLevelLibs = libs
 
+// One version for the phone, Mac and Windows apps. The last number is the GitHub Actions build
+// number, so every build has its own, newer version (local builds end in .0).
+val appVersion = "1.3.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
+
 allprojects {
     group = "app.vitune"
-    version = "1.2.6"
+    version = appVersion
 
     apply(plugin = "dev.detekt")
 

@@ -1,6 +1,6 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
-// The Mac (desktop) version of Vertune. It only reuses the plain-Kotlin provider modules,
+// The Mac and Windows (desktop) versions of Vertune. It only reuses the plain-Kotlin provider modules,
 // so nothing here affects the Android app.
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -36,6 +36,9 @@ dependencies {
     implementation("org.slf4j:slf4j-nop:2.0.20")
 }
 
+// Each installer is built on its own system (the dmg on a Mac, the msi on Windows).
+val buildingOnWindows = System.getProperty("os.name").lowercase().contains("windows")
+
 kotlin {
     jvmToolchain(libs.versions.jvm.get().toInt())
 }
@@ -44,9 +47,16 @@ compose.desktop {
     application {
         mainClass = "app.vertune.desktop.MainKt"
         jvmArgs += listOf(
+            // Shown in Settings → About.
+            "-Dvertune.version=${project.version}",
             "--enable-native-access=ALL-UNNAMED",
+            "--add-opens=java.desktop/sun.awt=ALL-UNNAMED"
+        )
+        jvmArgs += if (buildingOnWindows) listOf(
+            // Lets the app reach its Windows windows to colour their title bars (WinWindows.kt).
+            "--add-opens=java.desktop/sun.awt.windows=ALL-UNNAMED"
+        ) else listOf(
             // Lets the mini player reach its macOS window to float over full-screen apps (MacWindows.kt).
-            "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED",
             "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED"
         )
@@ -55,9 +65,9 @@ compose.desktop {
         // and shipped inside the app bundle.
         nativeDistributions {
             appResourcesRootDir.set(project.layout.projectDirectory.dir("resources"))
-            targetFormats(TargetFormat.Dmg)
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi)
             packageName = "Vertune"
-            packageVersion = "1.0.0"
+            packageVersion = project.version.toString()
             description = "Vertune music player"
             vendor = "Vertune"
             // The parts of Java the app and its libraries use (includeAllModules makes jlink fail on JDK 25).
@@ -79,6 +89,18 @@ compose.desktop {
                     """.trimIndent()
                 }
             }
+
+            windows {
+                iconFile.set(project.file("icons/vertune.ico"))
+                menuGroup = "Vertune"
+                shortcut = true
+                menu = true
+                // Installs for the current user only, so it doesn't need an administrator.
+                perUserInstall = true
+                dirChooser = true
+                // Keeps new versions installing over the old one instead of side by side.
+                upgradeUuid = "bafd19be-87a3-415c-916c-15f226856b30"
+            }
         }
 
         buildTypes.release.proguard {
@@ -96,7 +118,8 @@ tasks.register<JavaExec>("smokeTest") {
         languageVersion = JavaLanguageVersion.of(libs.versions.jvm.get().toInt())
     }
     val arch = if (System.getProperty("os.arch") == "aarch64") "arm64" else "x64"
-    systemProperty("compose.application.resources.dir", file("resources/macos-$arch").absolutePath)
+    val os = if (buildingOnWindows) "windows" else "macos"
+    systemProperty("compose.application.resources.dir", file("resources/$os-$arch").absolutePath)
 }
 
 // The Java runtime that jlink builds has read-only licence files, which made

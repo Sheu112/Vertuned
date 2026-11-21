@@ -32,9 +32,7 @@ object SongCache {
     val sizeChoicesMb = listOf(512L, 1024L, 2048L, 4096L, 8192L, 0L)
 
     val dir: File by lazy {
-        val home = System.getProperty("user.home")
-        val base = if (Paths.isMac) File(home, "Library/Caches/Vertune") else File(Paths.dataDir, "cache")
-        File(base, "songs").apply { mkdirs() }
+        File(Paths.cacheDir, "songs").apply { mkdirs() }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -228,7 +226,8 @@ object SongCache {
                 }
                 out.setLength(total!!)
             }
-            if (!part.renameTo(target)) error("couldn't move the file into place")
+            // Files.move (unlike renameTo) also replaces an existing file on Windows.
+            java.nio.file.Files.move(part.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         } finally {
             part.delete()
         }

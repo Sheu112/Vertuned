@@ -37,8 +37,8 @@ fun main(): Unit = runBlocking {
         "top entry ${top.listenedMs} ms, liked"
     }
 
-    for (tool in listOf("yt-dlp_macos", "ffmpeg", "qjs")) check("tool $tool") {
-        (Paths.tool(tool) ?: if (tool == "yt-dlp_macos") Paths.tool("yt-dlp") else null) ?: error("not found")
+    for (tool in listOf("yt-dlp", "ffmpeg", "qjs")) check("tool $tool") {
+        (Paths.tool(tool) ?: if (tool == "yt-dlp") Paths.tool("yt-dlp_macos") else null) ?: error("not found")
     }
 
     var firstSong: Track? = null
