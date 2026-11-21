@@ -71,6 +71,8 @@ fun PlaylistDownloadIcon(
                     songs.forEach {
                         PrecacheService.scheduleCache(context.applicationContext, it)
                     }
+                    // Save the lyrics too, so they're there offline
+                    LyricsPrefetch.prefetch(songs)
                 },
                 modifier = modifier
             )

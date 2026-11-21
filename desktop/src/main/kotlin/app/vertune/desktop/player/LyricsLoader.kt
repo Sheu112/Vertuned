@@ -12,6 +12,8 @@ import app.vitune.providers.lrclib.toLrcFile
 import app.vitune.providers.wordsync.WordLyrics
 import app.vitune.providers.wordsync.WordSync
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -62,6 +64,34 @@ object LyricsLoader {
         }
         word
     }
+
+    private val prefetchScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val prefetchSlots = kotlinx.coroutines.sync.Semaphore(2)
+
+    /** Saves lyrics for a whole playlist ahead of time (the download button), so they work offline. */
+    fun prefetchAll(tracks: List<Track>) {
+        tracks.distinctBy { it.id }.forEach { track ->
+            prefetchScope.launch {
+                prefetchSlots.withPermit {
+                    runCatching {
+                        val saved = Library.lyrics(track.id)
+                        if (saved?.fixed != null && saved.synced != null && saved.word != null) return@runCatching
+                        val durationMs = parseDuration(track.durationText)
+                        val lyrics = load(track, durationMs)
+                        if (lyrics.word == null) loadWord(track, durationMs)
+                    }.exceptionOrNull()?.let { System.err.println("Couldn't save lyrics for ${track.id}: ${it.message}") }
+                }
+            }
+        }
+    }
+
+    /** "3:05" or "1:02:03" in milliseconds; 0 if unknown. */
+    private fun parseDuration(text: String?): Long = text
+        ?.split(':')
+        ?.mapNotNull { it.trim().toLongOrNull() }
+        ?.fold(0L) { acc, part -> acc * 60 + part }
+        ?.times(1000)
+        ?: 0L
 
     fun parseWord(text: String?): WordLyrics? = WordLyrics.parseYrc(text)
 
