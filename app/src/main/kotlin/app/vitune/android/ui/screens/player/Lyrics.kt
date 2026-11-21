@@ -38,6 +38,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -48,13 +49,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
@@ -97,6 +103,8 @@ import app.vitune.providers.lrclib.LrcLib
 import app.vitune.providers.lrclib.LrcParser
 import app.vitune.providers.lrclib.models.Track
 import app.vitune.providers.lrclib.toLrcFile
+import app.vitune.providers.wordsync.WordLyrics
+import app.vitune.providers.wordsync.WordSync
 import com.valentinilk.shimmer.shimmer
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
@@ -149,9 +157,13 @@ fun Lyrics(
     val pip = isInPip()
 
     var lyrics by remember { mutableStateOf<Lyrics?>(null) }
+    val wordByWord = PlayerPreferences.isShowingWordByWordLyrics
+    val wordLyrics = remember(lyrics?.word, wordByWord) {
+        if (wordByWord) WordLyrics.parseYrc(lyrics?.word) else null
+    }
 
-    val showSynchronizedLyrics = remember(shouldShowSynchronizedLyrics, lyrics) {
-        shouldShowSynchronizedLyrics && lyrics?.synced?.isBlank() != true
+    val showSynchronizedLyrics = remember(shouldShowSynchronizedLyrics, lyrics, wordLyrics) {
+        shouldShowSynchronizedLyrics && (wordLyrics != null || lyrics?.synced?.isBlank() != true)
     }
 
     var editing by remember(mediaId, shouldShowSynchronizedLyrics) { mutableStateOf(false) }
@@ -236,7 +248,9 @@ fun Lyrics(
                             Lyrics(
                                 songId = mediaId,
                                 fixed = fixed.orEmpty(),
-                                synced = synced.orEmpty()
+                                synced = synced.orEmpty(),
+                                startTime = currentLyrics?.startTime,
+                                word = currentLyrics?.word
                             ).also {
                                 this@withContext.ensureActive()
 
@@ -253,6 +267,39 @@ fun Lyrics(
                             (shouldShowSynchronizedLyrics && lyrics?.synced?.isBlank() == true) ||
                             (!shouldShowSynchronizedLyrics && lyrics?.fixed?.isBlank() == true)
                     }
+            }
+        }.exceptionOrNull()?.let {
+            if (it is CancellationException) throw it
+            else it.printStackTrace()
+        }
+    }
+
+    // Word-by-word lyrics come from NetEase, then QQ Music, and are looked up once per song.
+    val needsWordLyrics = shouldUpdateLyrics && wordByWord && shouldShowSynchronizedLyrics &&
+        lyrics != null && lyrics?.word == null
+    LaunchedEffect(mediaId, needsWordLyrics) {
+        if (!needsWordLyrics) return@LaunchedEffect
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val mediaMetadata = currentMediaMetadataProvider()
+                val duration = withContext(Dispatchers.Main) { currentDurationProvider() }
+                val title = mediaMetadata.title?.toString().orEmpty().let {
+                    if (mediaId.startsWith(LOCAL_KEY_PREFIX)) it.substringBeforeLast('.').trim() else it
+                }
+                val result = WordSync.lyrics(
+                    title = title,
+                    artist = mediaMetadata.artist?.toString().orEmpty(),
+                    durationMs = if (duration == C.TIME_UNSET) 0L else duration
+                )
+                // A network failure leaves it unset so it's tried again next time.
+                if (result == null || result.isFailure) return@withContext
+                val found = result.getOrNull()?.lyrics?.serialize().orEmpty()
+                ensureActive()
+                lyrics?.let { current ->
+                    transaction {
+                        runCatching { Database.upsert(current.copy(word = found)) }
+                    }
+                }
             }
         }.exceptionOrNull()?.let {
             if (it is CancellationException) throw it
@@ -277,11 +324,16 @@ fun Lyrics(
                         if (shouldShowSynchronizedLyrics) Lyrics(
                             songId = mediaId,
                             fixed = lyrics?.fixed,
-                            synced = it
+                            synced = it,
+                            startTime = lyrics?.startTime,
+                            // Your own edit wins over word-by-word lyrics found online
+                            word = ""
                         ) else Lyrics(
                             songId = mediaId,
                             fixed = it,
-                            synced = lyrics?.synced
+                            synced = lyrics?.synced,
+                            startTime = lyrics?.startTime,
+                            word = lyrics?.word
                         )
                     )
                 }
@@ -312,7 +364,9 @@ fun Lyrics(
                             Lyrics(
                                 songId = mediaId,
                                 fixed = lyrics?.fixed,
-                                synced = it.syncedLyrics
+                                synced = it.syncedLyrics,
+                                // A hand-picked LrcLib track wins over word-by-word lyrics
+                                word = ""
                             )
                         )
                     }
@@ -336,7 +390,7 @@ fun Lyrics(
         )
 
         AnimatedVisibility(
-            visible = error,
+            visible = error && !(shouldShowSynchronizedLyrics && wordLyrics != null),
             enter = slideInVertically { -it },
             exit = slideOutVertically { -it },
             modifier = Modifier.align(Alignment.TopCenter)
@@ -374,26 +428,35 @@ fun Lyrics(
             )
         }
 
-        val lyricsState = rememberSaveable(text) {
-            val file = lyrics?.synced?.takeIf { it.isNotBlank() }?.let {
-                LrcParser.parse(it)?.toLrcFile()
-            }
+        val lyricsState = rememberSaveable(text, wordLyrics) {
+            if (wordLyrics != null) SynchronizedLyricsState(
+                sentences = wordLyrics.lines.associate { it.start to it.text },
+                offset = 0L
+            ) else {
+                val file = lyrics?.synced?.takeIf { it.isNotBlank() }?.let {
+                    LrcParser.parse(it)?.toLrcFile()
+                }
 
-            SynchronizedLyricsState(
-                sentences = file?.lines,
-                offset = file?.offset?.inWholeMilliseconds ?: 0L
-            )
+                SynchronizedLyricsState(
+                    sentences = file?.lines,
+                    offset = file?.offset?.inWholeMilliseconds ?: 0L
+                )
+            }
         }
 
+        val currentPosition = {
+            binder?.player?.let { player ->
+                player.currentPosition + UPDATE_DELAY + lyricsState.offset -
+                    (lyrics?.startTime ?: 0L)
+            } ?: 0L
+        }
+        // Updated every tick while word-by-word lyrics are showing, to light up the words.
+        var wordPosition by remember { mutableLongStateOf(0L) }
+
         val synchronizedLyrics = remember(lyricsState) {
-            invalidLrc = lyricsState.sentences == null
+            invalidLrc = lyricsState.sentences == null && wordLyrics == null
             lyricsState.sentences?.let {
-                SynchronizedLyrics(it.toImmutableMap()) {
-                    binder?.player?.let { player ->
-                        player.currentPosition + UPDATE_DELAY + lyricsState.offset -
-                            (lyrics?.startTime ?: 0L)
-                    } ?: 0L
-                }
+                SynchronizedLyrics(it.toImmutableMap(), currentPosition)
             }
         }
 
@@ -415,6 +478,7 @@ fun Lyrics(
 
                     while (true) {
                         delay(UPDATE_DELAY.milliseconds)
+                        if (wordLyrics != null) wordPosition = currentPosition()
                         if (!currentSynchronizedLyrics.update()) continue
 
                         lazyListState.animateScrollToItem(
@@ -444,7 +508,15 @@ fun Lyrics(
                             else colorPalette.textDisabled
                         )
 
-                        if (sentence.isBlank()) Image(
+                        val wordLine = wordLyrics?.lines?.getOrNull(index)
+                        if (wordLine != null && index == synchronizedLyrics.index) WordByWordLine(
+                            line = wordLine,
+                            position = { wordPosition },
+                            style = typography.xs.center.medium,
+                            sungColor = Color.White,
+                            unsungColor = colorPalette.textDisabled,
+                            modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
+                        ) else if (sentence.isBlank()) Image(
                             painter = painterResource(R.drawable.musical_notes),
                             contentDescription = null,
                             colorFilter = ColorFilter.tint(color),
@@ -530,6 +602,20 @@ fun Lyrics(
                                         }
                                     )
 
+                                    if (shouldShowSynchronizedLyrics) MenuEntry(
+                                        icon = R.drawable.text,
+                                        text = stringResource(
+                                            if (wordByWord) R.string.show_line_by_line_lyrics
+                                            else R.string.show_word_by_word_lyrics
+                                        ),
+                                        secondaryText = if (wordByWord) null
+                                        else stringResource(R.string.word_by_word_lyrics_description),
+                                        onClick = {
+                                            menuState.hide()
+                                            PlayerPreferences.isShowingWordByWordLyrics = !wordByWord
+                                        }
+                                    )
+
                                     MenuEntry(
                                         icon = R.drawable.pencil,
                                         text = stringResource(R.string.edit_lyrics),
@@ -577,11 +663,14 @@ fun Lyrics(
                                                         if (shouldShowSynchronizedLyrics) Lyrics(
                                                             songId = mediaId,
                                                             fixed = lyrics?.fixed,
-                                                            synced = null
+                                                            synced = null,
+                                                            word = null
                                                         ) else Lyrics(
                                                             songId = mediaId,
                                                             fixed = null,
-                                                            synced = lyrics?.synced
+                                                            synced = lyrics?.synced,
+                                                            startTime = lyrics?.startTime,
+                                                            word = lyrics?.word
                                                         )
                                                     )
                                                 }
@@ -710,4 +799,42 @@ fun LrcLibSearchDialog(
             }
         )
     }
+}
+
+/**
+ * The line being sung, with each word lighting up as it's reached. The word in progress
+ * brightens gradually over its own duration.
+ */
+@Composable
+private fun WordByWordLine(
+    line: WordLyrics.Line,
+    position: () -> Long,
+    style: TextStyle,
+    sungColor: Color,
+    unsungColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val now = position()
+    val text = remember(line, now) {
+        buildAnnotatedString {
+            line.words.forEachIndexed { i, word ->
+                val progress = when {
+                    now >= word.end -> 1f
+                    now <= word.start -> 0f
+                    word.duration <= 0 -> 1f
+                    else -> (now - word.start).toFloat() / word.duration
+                }
+                val wordText = if (i == 0) word.text.trimStart() else word.text
+                withStyle(SpanStyle(color = lerp(unsungColor, sungColor, progress))) {
+                    append(if (i == line.words.lastIndex) wordText.trimEnd() else wordText)
+                }
+            }
+        }
+    }
+
+    BasicText(
+        text = text,
+        style = style,
+        modifier = modifier
+    )
 }

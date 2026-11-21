@@ -9,6 +9,8 @@ import app.vitune.providers.kugou.KuGou
 import app.vitune.providers.lrclib.LrcLib
 import app.vitune.providers.lrclib.LrcParser
 import app.vitune.providers.lrclib.toLrcFile
+import app.vitune.providers.wordsync.WordLyrics
+import app.vitune.providers.wordsync.WordSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
@@ -38,13 +40,30 @@ object LyricsLoader {
                 ?.map { it?.text }?.getOrNull()
             ?: KuGou.lyrics(artist = artist, title = title, duration = durationMs / 1000)?.map { it?.value }?.getOrNull()
 
-        Library.SavedLyrics(fixed.orEmpty(), synced.orEmpty()).also {
+        Library.SavedLyrics(fixed.orEmpty(), synced.orEmpty(), saved?.word).also {
             runCatching {
                 Library.save(track)
                 Library.saveLyrics(track.id, it.fixed, it.synced)
             }
         }
     }
+
+    /**
+     * Word-by-word lyrics from NetEase, then QQ Music, like the phone. Returns what was saved
+     * ("" when neither has them), or null if the lookup failed and should be tried again later.
+     */
+    suspend fun loadWord(track: Track, durationMs: Long): String? = withContext(Dispatchers.IO) {
+        val result = WordSync.lyrics(title = track.title, artist = track.artists.orEmpty(), durationMs = durationMs)
+        if (result == null || result.isFailure) return@withContext null
+        val word = result.getOrNull()?.lyrics?.serialize().orEmpty()
+        runCatching {
+            Library.save(track)
+            Library.saveWordLyrics(track.id, word)
+        }
+        word
+    }
+
+    fun parseWord(text: String?): WordLyrics? = WordLyrics.parseYrc(text)
 
     /** Synced lyrics as (time in ms → line), with the file's offset applied; null if they can't be read. */
     fun parseSynced(text: String?): List<Pair<Long, String>>? {

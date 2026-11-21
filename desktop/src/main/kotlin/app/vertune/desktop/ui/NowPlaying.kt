@@ -50,10 +50,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -64,6 +69,7 @@ import app.vertune.desktop.data.Settings
 import app.vertune.desktop.data.Track
 import app.vertune.desktop.player.AudioEffects
 import app.vertune.desktop.player.LyricsLoader
+import app.vitune.providers.wordsync.WordLyrics
 import app.vertune.desktop.player.PlayerController
 import kotlinx.coroutines.delay
 
@@ -363,7 +369,18 @@ private fun LyricsOverlay(t: Track) {
         value = runCatching { LyricsLoader.load(t, d) }.getOrElse { Library.SavedLyrics("", "") }
     }
     val lines = remember(lyrics?.synced) { LyricsLoader.parseSynced(lyrics?.synced) }
-    val missing = lyrics != null && (if (synced) lines == null else lyrics?.fixed.isNullOrBlank())
+
+    // Word-by-word lyrics (NetEase, then QQ Music), looked up once per song after the rest.
+    val wordMode by Settings.showWordLyrics.flow.collectAsState()
+    val wordText by produceState<String?>(null, t.id, lyrics, synced, wordMode) {
+        val saved = lyrics ?: return@produceState
+        value = saved.word
+        if (saved.word == null && synced && wordMode) {
+            value = runCatching { LyricsLoader.loadWord(t, PlayerController.durationMs.value) }.getOrNull()
+        }
+    }
+    val words = remember(wordText, wordMode) { if (wordMode) LyricsLoader.parseWord(wordText) else null }
+    val missing = lyrics != null && (if (synced) lines == null && words == null else lyrics?.fixed.isNullOrBlank())
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
         val height = maxHeight
@@ -375,6 +392,7 @@ private fun LyricsOverlay(t: Track) {
                 style = Type.xs.medium.color(Color.White).copy(textAlign = TextAlign.Center),
                 modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color.Black.copy(0.4f)).padding(8.dp)
             )
+            synced && words != null -> WordSyncedLyrics(words, height)
             synced && lines != null -> SyncedLyrics(lines, height)
             else -> BasicText(
                 lyrics?.fixed.orEmpty(),
@@ -393,6 +411,11 @@ private fun LyricsOverlay(t: Track) {
                     else str("show_synchronized_lyrics", "Show synchronized lyrics"),
                     "time"
                 ) { menu = false; Settings.showSyncedLyrics.value = !synced }
+                if (synced) MenuItem(
+                    if (wordMode) str("show_line_by_line_lyrics", "Show line-by-line lyrics")
+                    else str("show_word_by_word_lyrics", "Show word-by-word lyrics"),
+                    "text"
+                ) { menu = false; Settings.showWordLyrics.value = !wordMode }
                 MenuItem(str("search_lyrics_online", "Search lyrics online"), "search") {
                     menu = false
                     openUrl("https://www.google.com/search?q=" + java.net.URLEncoder.encode("${t.title} ${t.artists.orEmpty()} lyrics", "UTF-8"))
@@ -421,6 +444,57 @@ private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
             )
         }
         item { Spacer(Modifier.height(height)) }
+    }
+}
+
+/** Like [SyncedLyrics], but the current line lights up word by word as it's sung. */
+@Composable
+private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
+    val palette = LocalPalette.current
+    val reported by PlayerController.positionMs.collectAsState()
+    val playing by PlayerController.isPlaying.collectAsState()
+    // The player reports its position a few times a second; fill in the frames between.
+    var position by remember { mutableStateOf(reported) }
+    LaunchedEffect(reported, playing) {
+        val base = reported
+        val since = System.nanoTime()
+        position = base
+        if (!playing) return@LaunchedEffect
+        while (true) {
+            withFrameMillis { }
+            position = base + (System.nanoTime() - since) / 1_000_000
+        }
+    }
+
+    val lines = lyrics.lines
+    val index = lines.indexOfLast { it.start <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
+    val state = rememberLazyListState()
+    LaunchedEffect(index) { state.animateScrollToItem((index + 1).coerceAtLeast(0), -(height.value / 3).toInt()) }
+    LazyColumn(state = state, userScrollEnabled = false, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
+        item { Spacer(Modifier.height(height)) }
+        itemsIndexed(lines) { i, line ->
+            val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
+            val style = Type.xs.medium.copy(textAlign = TextAlign.Center)
+            val modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
+            if (i == index) BasicText(wordLine(line, position, Color.White, palette.textDisabled), style = style, modifier = modifier)
+            else BasicText(line.text, style = style.color(color), modifier = modifier)
+        }
+        item { Spacer(Modifier.height(height)) }
+    }
+}
+
+/** The line's words, each brightening from [unsung] to [sung] over its own duration. */
+private fun wordLine(line: WordLyrics.Line, now: Long, sung: Color, unsung: Color) = buildAnnotatedString {
+    line.words.forEachIndexed { i, word ->
+        val progress = when {
+            now >= word.end || word.duration <= 0 -> if (now >= word.start) 1f else 0f
+            now <= word.start -> 0f
+            else -> (now - word.start).toFloat() / word.duration
+        }
+        var text = word.text
+        if (i == 0) text = text.trimStart()
+        if (i == line.words.lastIndex) text = text.trimEnd()
+        withStyle(SpanStyle(color = lerp(unsung, sung, progress))) { append(text) }
     }
 }
 

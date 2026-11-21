@@ -20,5 +20,7 @@ data class Lyrics(
     @PrimaryKey val songId: String,
     val fixed: String?,
     val synced: String?,
-    val startTime: Long? = null
+    val startTime: Long? = null,
+    // Word-by-word lyrics (YRC layout, see WordLyrics). Null = not looked up yet, "" = none found.
+    val word: String? = null
 )

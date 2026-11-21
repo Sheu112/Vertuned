@@ -129,6 +129,9 @@
     <string name="invalid_synchronized_lyrics">Invalid synchronized lyrics, refetch or edit the lyrics and try again</string>
     <string name="show_unsynchronized_lyrics">Show unsynchronized lyrics</string>
     <string name="show_synchronized_lyrics">Show synchronized lyrics</string>
+    <string name="show_word_by_word_lyrics">Show word-by-word lyrics</string>
+    <string name="show_line_by_line_lyrics">Show line-by-line lyrics</string>
+    <string name="word_by_word_lyrics_description">Highlights each word as it\'s sung, when NetEase or QQ Music has timings</string>
     <string name="provided_lyrics_by">Provided by lrclib.net &amp; kugou.com</string>
     <string name="edit_lyrics">Edit lyrics</string>
     <string name="search_lyrics_online">Search lyrics online</string>

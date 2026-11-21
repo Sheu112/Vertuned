@@ -98,6 +98,7 @@ object Settings {
     val showRemaining = boolean("player.showRemaining", false)
     val showLyrics = boolean("player.showLyrics", false)
     val showSyncedLyrics = boolean("player.showSyncedLyrics", false)
+    val showWordLyrics = boolean("player.showWordLyrics", true)
     val persistentQueue = boolean("player.persistentQueue", true)
     val skipOnError = boolean("player.skipOnError", false)
     val skipSilence = boolean("player.skipSilence", false)
