@@ -498,8 +498,8 @@ private fun FollowingLyricsList(key: Any, index: Int, height: Dp, items: LazyLis
                     .clickable { follow = true }
                     .padding(horizontal = 12.dp, vertical = 7.dp)
             ) {
-                AppIcon("sync", Color.White, size = 14.dp)
-                BasicText(str("lyrics_back_to_line", "Back to current line"), style = Type.xs.semiBold.color(Color.White))
+                AppIcon("lyrics_sync", Color.White, size = 16.dp)
+                BasicText(str("lyrics_back_to_line", "Sync"), style = Type.xs.semiBold.color(Color.White))
             }
         }
     }

@@ -135,7 +135,7 @@
     <string name="lyrics_mode_word_short">Word</string>
     <string name="lyrics_mode_line_short">Line</string>
     <string name="lyrics_mode_unsynced_short">Plain</string>
-    <string name="lyrics_back_to_line">Back to current line</string>
+    <string name="lyrics_back_to_line">Sync</string>
     <string name="lyrics_text_size">Text size</string>
     <string name="lyrics_size_small">Small</string>
     <string name="lyrics_size_medium">Medium</string>

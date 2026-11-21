@@ -620,10 +620,10 @@ fun Lyrics(
                     .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
                 Image(
-                    painter = painterResource(R.drawable.sync),
+                    painter = painterResource(R.drawable.lyrics_sync),
                     contentDescription = null,
                     colorFilter = ColorFilter.tint(Color.White),
-                    modifier = Modifier.size(14.dp)
+                    modifier = Modifier.size(16.dp)
                 )
                 BasicText(
                     text = stringResource(R.string.lyrics_back_to_line),
