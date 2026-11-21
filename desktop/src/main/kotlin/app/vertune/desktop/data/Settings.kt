@@ -102,6 +102,8 @@ object Settings {
     /** Synced lyrics keep the current line in view (true) or can be scrolled freely (false). */
     val lyricsFollowLine = boolean("player.lyricsFollowLine", true)
     /** Lyrics text size in points (picked in the lyrics menu). */
+    /** Extra lead for synced lyrics in ms, set from the lyrics menu (positive shows them earlier). */
+    val lyricsTimingMs = long("lyricsTimingMs", 0L)
     val lyricsTextSize = int("player.lyricsTextSize", 16)
     val persistentQueue = boolean("player.persistentQueue", true)
     val skipOnError = boolean("player.skipOnError", false)

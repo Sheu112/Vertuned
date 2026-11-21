@@ -438,6 +438,7 @@ private fun LyricsOverlay(t: Track) {
                     onPick = { menu = false; setMode(it) }
                 )
                 LyricsSizeRow()
+                LyricsTimingRow()
             }
         }
     }
@@ -450,7 +451,8 @@ private fun SyncedLyrics(lines: List<Pair<Long, String>>, height: Dp) {
     // the player's position updates, which come only 4 times a second. The Mac is left as it was.
     val reported by PlayerController.positionMs.collectAsState()
     val position = if (app.vertune.desktop.Paths.isWindows) smoothPosition() else reported
-    val index = lines.indexOfLast { it.first <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
+    val lead = lyricsLead()
+    val index = lines.indexOfLast { it.first <= position + lead }.coerceAtLeast(-1)
     FollowingLyricsList(lines, index, height) {
         itemsIndexed(lines) { i, (_, line) ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
@@ -532,15 +534,19 @@ private fun smoothPosition(): Long {
 private fun WordSyncedLyrics(lyrics: WordLyrics, height: Dp) {
     val palette = LocalPalette.current
     val position = smoothPosition()
+    val lead = lyricsLead()
 
     val lines = lyrics.lines
-    val index = lines.indexOfLast { it.start <= position + LYRICS_LEAD_MS }.coerceAtLeast(-1)
+    val index = lines.indexOfLast { it.start <= position + lead }.coerceAtLeast(-1)
+    // Words fill in with the lead too on Windows; on the Mac they keep following the plain
+    // position as before (plus any Timing change from the menu).
+    val wordNow = position + if (app.vertune.desktop.Paths.isWindows) lead else lead - LYRICS_LEAD_MS
     FollowingLyricsList(lines, index, height) {
         itemsIndexed(lines) { i, line ->
             val color by animateColorAsState(if (i == index) Color.White else palette.textDisabled)
             val style = lyricsText().copy(textAlign = TextAlign.Center)
             val modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
-            if (i == index) BasicText(wordLine(line, position, Color.White, palette.textDisabled), style = style, modifier = modifier)
+            if (i == index) BasicText(wordLine(line, wordNow, Color.White, palette.textDisabled), style = style, modifier = modifier)
             else BasicText(line.text, style = style.color(color), modifier = modifier)
         }
     }
@@ -706,8 +712,15 @@ private val CONTROL_HEIGHT = 64.dp
 private val PRESS_OFFSET = 8.dp
 // Lyrics run this many ms ahead of the reported position. The Mac's sound output reports a
 // little ahead of what you hear, so it only needs a small lead. Windows reports what you hear,
-// like the phone, so it gets the phone's 250 ms lead to line up the same way.
-private val LYRICS_LEAD_MS = if (app.vertune.desktop.Paths.isWindows) 250L else 50L
+// like the phone, so it starts from the phone's 250 ms lead plus a little more for Windows'
+// own sound output delay. The Timing row in the lyrics menu adds to this.
+private val LYRICS_LEAD_MS = if (app.vertune.desktop.Paths.isWindows) 400L else 50L
+
+@Composable
+private fun lyricsLead(): Long {
+    val extra by Settings.lyricsTimingMs.flow.collectAsState()
+    return LYRICS_LEAD_MS + extra
+}
 
 // How a song's lyrics are shown, saved per song (same numbers as the phone's LyricsMode).
 private const val LYRICS_MODE_UNSYNCED = 0
@@ -789,6 +802,49 @@ private fun LyricsSizeRow() {
         step("A+", 1)
     }
 }
+
+/** "Timing": shows synced lyrics earlier or later in 0.1 s steps, for every song. */
+@Composable
+private fun LyricsTimingRow() {
+    val palette = LocalPalette.current
+    val timing by Settings.lyricsTimingMs.flow.collectAsState()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.width(260.dp).padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        BasicText("Timing", style = Type.xs.medium.color(palette.text), modifier = Modifier.weight(1f))
+        @Composable
+        fun step(label: String, delta: Long) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(palette.background2)
+                    .clickable { Settings.lyricsTimingMs.value = (timing + delta).coerceIn(-TIMING_LIMIT_MS, TIMING_LIMIT_MS) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                BasicText(label, style = Type.xs.semiBold.color(palette.text))
+            }
+        }
+        step("Later", -TIMING_STEP_MS)
+        Box(
+            Modifier.width(64.dp).clickable { Settings.lyricsTimingMs.value = 0L },
+            contentAlignment = Alignment.Center
+        ) {
+            BasicText(
+                when {
+                    timing == 0L -> "Normal"
+                    else -> "%+.1f s".format(java.util.Locale.ROOT, timing / 1000f)
+                },
+                style = Type.xs.medium.color(palette.textSecondary)
+            )
+        }
+        step("Earlier", TIMING_STEP_MS)
+    }
+}
+
+private const val TIMING_STEP_MS = 100L
+private const val TIMING_LIMIT_MS = 3_000L
 
 /**
  * Slides the list so item [index] sits [offset] px into it (negative = further down), even when
