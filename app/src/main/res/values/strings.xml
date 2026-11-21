@@ -11,6 +11,8 @@
     <string name="format_go_to_artist">More from %1$s</string>
     <string name="format_top_playlist">Top %1$s</string>
     <string name="format_my_top_playlist">My top %1$s</string>
+    <string name="format_listened_total">Listened %1$s in total</string>
+    <string name="format_listened_in_period">Listened %1$s in the %2$s</string>
     <string name="format_view_top_of_header">View top %1$s of …</string>
     <string name="format_multiplier">%1$sx</string>
     <string name="past_24_hours">Past 24 hours</string>

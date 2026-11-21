@@ -46,6 +46,7 @@ import app.vitune.android.utils.forcePlayFromBeginning
 import app.vitune.android.utils.formatListeningTime
 import app.vitune.android.utils.medium
 import app.vitune.android.utils.secondary
+import app.vitune.android.utils.semiBold
 import app.vitune.android.utils.playingSong
 import app.vitune.compose.persist.persistList
 import app.vitune.core.data.enums.BuiltInPlaylist
@@ -77,6 +78,16 @@ fun BuiltInPlaylistSongs(
 
     // Listening time per song id, only filled for the "My top" playlist
     var playTimes by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+
+    // Total listening time for the "My top" playlist's period (like the Mac app's line)
+    var totalPlayTime by remember { mutableStateOf(0L) }
+
+    if (builtInPlaylist == BuiltInPlaylist.Top) LaunchedEffect(Unit) {
+        topListPeriodProperty.stateFlow.flatMapLatest { period ->
+            if (period.duration == null) Database.totalPlayTimeMs()
+            else Database.totalPlayTimeMs(period = period.duration.inWholeMilliseconds)
+        }.distinctUntilChanged().collect { totalPlayTime = it }
+    }
 
     var sortBy by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(SongSortBy.DateAdded) }
     var sortOrder by rememberSaveable(stateSaver = enumSaver()) { mutableStateOf(SortOrder.Descending) }
@@ -201,6 +212,25 @@ fun BuiltInPlaylistSongs(
                         )
                     }
                 }
+            }
+
+            if (builtInPlaylist == BuiltInPlaylist.Top && songs.isNotEmpty()) item(
+                key = "total",
+                contentType = 1
+            ) {
+                val time = formatListeningTime(totalPlayTime)
+                BasicText(
+                    text = if (topListPeriod.duration == null)
+                        stringResource(R.string.format_listened_total, time)
+                    else stringResource(
+                        R.string.format_listened_in_period,
+                        time,
+                        topListPeriod.displayName().lowercase()
+                    ),
+                    style = typography.xs.secondary.semiBold,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
             }
 
             itemsIndexed(
