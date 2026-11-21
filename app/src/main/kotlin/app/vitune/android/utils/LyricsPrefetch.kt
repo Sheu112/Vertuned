@@ -78,7 +78,8 @@ object LyricsPrefetch {
                     fixed = fixed.orEmpty(),
                     synced = synced.orEmpty(),
                     startTime = saved?.startTime,
-                    word = word
+                    word = word,
+                    mode = saved?.mode
                 )
             )
         }

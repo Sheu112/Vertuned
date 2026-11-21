@@ -361,7 +361,6 @@ private fun CoverWithLyrics(t: Track, size: Dp) {
 @Composable
 private fun LyricsOverlay(t: Track) {
     val palette = LocalPalette.current
-    val synced by Settings.showSyncedLyrics.flow.collectAsState()
     val lyrics by produceState<Library.SavedLyrics?>(null, t.id) {
         value = null
         // Wait for the song's length, which helps find the right synced lyrics.
@@ -372,16 +371,29 @@ private fun LyricsOverlay(t: Track) {
     }
     val lines = remember(lyrics?.synced) { LyricsLoader.parseSynced(lyrics?.synced) }
 
+    // Each song remembers word-by-word, line-by-line or unsynchronized (word-by-word until changed),
+    // the same way the phone does.
+    var chosenMode by remember(t.id, lyrics) { mutableStateOf(lyrics?.mode) }
+    val mode = chosenMode ?: LYRICS_MODE_WORD
+    val wordMode = mode == LYRICS_MODE_WORD
+    val wantsSynced = mode != LYRICS_MODE_UNSYNCED
+    val setMode: (Int) -> Unit = { newMode ->
+        chosenMode = newMode
+        runCatching { Library.saveLyricsMode(t.id, newMode) }
+    }
+
     // Word-by-word lyrics (NetEase, then QQ Music), looked up once per song after the rest.
-    val wordMode by Settings.showWordLyrics.flow.collectAsState()
-    val wordText by produceState<String?>(null, t.id, lyrics, synced, wordMode) {
+    val wordText by produceState<String?>(null, t.id, lyrics, wantsSynced, wordMode) {
         val saved = lyrics ?: return@produceState
         value = saved.word
-        if (saved.word == null && synced && wordMode) {
+        if (saved.word == null && wantsSynced && wordMode) {
             value = runCatching { LyricsLoader.loadWord(t, PlayerController.durationMs.value) }.getOrNull()
         }
     }
     val words = remember(wordText, wordMode) { if (wordMode) LyricsLoader.parseWord(wordText) else null }
+    // A song with no timed lyrics at all shows the plain ones, unless synced was picked on purpose.
+    val noTimedLyrics = lyrics != null && lines == null && wordText == ""
+    val synced = wantsSynced && !(chosenMode == null && noTimedLyrics)
     val missing = lyrics != null && (if (synced) lines == null && words == null else lyrics?.fixed.isNullOrBlank())
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
@@ -419,16 +431,21 @@ private fun LyricsOverlay(t: Track) {
             }
             DarkMenu(menu, { menu = false }) {
                 MenuItem(str("lyrics_text_size", "Text size"), "text") { menu = false; sizeMenu = true }
-                MenuItem(
-                    if (synced) str("show_unsynchronized_lyrics", "Show unsynchronized lyrics")
-                    else str("show_synchronized_lyrics", "Show synchronized lyrics"),
-                    "time"
-                ) { menu = false; Settings.showSyncedLyrics.value = !synced }
-                if (synced) MenuItem(
-                    if (wordMode) str("show_line_by_line_lyrics", "Show line-by-line lyrics")
-                    else str("show_word_by_word_lyrics", "Show word-by-word lyrics"),
-                    "text"
-                ) { menu = false; Settings.showWordLyrics.value = !wordMode }
+                // This song's lyrics mode, with a check next to the current one
+                val current = when {
+                    !synced -> LYRICS_MODE_UNSYNCED
+                    wordMode -> LYRICS_MODE_WORD
+                    else -> LYRICS_MODE_LINE
+                }
+                MenuItem(str("lyrics_mode_word", "Word-by-word lyrics"), "text", checked = current == LYRICS_MODE_WORD) {
+                    menu = false; setMode(LYRICS_MODE_WORD)
+                }
+                MenuItem(str("lyrics_mode_line", "Line-by-line lyrics"), "time", checked = current == LYRICS_MODE_LINE) {
+                    menu = false; setMode(LYRICS_MODE_LINE)
+                }
+                MenuItem(str("lyrics_mode_unsynced", "Unsynchronized lyrics"), "musical_notes", checked = current == LYRICS_MODE_UNSYNCED) {
+                    menu = false; setMode(LYRICS_MODE_UNSYNCED)
+                }
                 if (synced) {
                     val follow by Settings.lyricsFollowLine.flow.collectAsState()
                     MenuItem(
@@ -436,10 +453,6 @@ private fun LyricsOverlay(t: Track) {
                         else str("lyrics_follow_line", "Follow the current line"),
                         "sync"
                     ) { menu = false; Settings.lyricsFollowLine.value = !follow }
-                }
-                MenuItem(str("search_lyrics_online", "Search lyrics online"), "search") {
-                    menu = false
-                    openUrl("https://www.google.com/search?q=" + java.net.URLEncoder.encode("${t.title} ${t.artists.orEmpty()} lyrics", "UTF-8"))
                 }
             }
         }
@@ -566,11 +579,14 @@ fun DarkMenu(expanded: Boolean, onDismiss: () -> Unit, content: @Composable () -
 }
 
 @Composable
-fun MenuItem(text: String, icon: String?, onClick: () -> Unit) {
+fun MenuItem(text: String, icon: String?, checked: Boolean = false, onClick: () -> Unit) {
     val palette = LocalPalette.current
     DropdownMenuItem(
         text = { BasicText(text, style = Type.xs.medium.color(palette.text)) },
         leadingIcon = icon?.let { { AppIcon(it, palette.text, size = 18.dp) } },
+        trailingIcon = if (checked) {
+            { BasicText("✓", style = Type.s.semiBold.color(palette.accent)) }
+        } else null,
         onClick = onClick
     )
 }
@@ -664,6 +680,11 @@ private fun SleepTimerDialog(onDismiss: () -> Unit) {
 private val CONTROL_HEIGHT = 64.dp
 private val PRESS_OFFSET = 8.dp
 private const val LYRICS_LEAD_MS = 50L
+
+// How a song's lyrics are shown, saved per song (same numbers as the phone's LyricsMode).
+private const val LYRICS_MODE_UNSYNCED = 0
+private const val LYRICS_MODE_LINE = 1
+private const val LYRICS_MODE_WORD = 2
 
 /** Lyrics text at the size picked in the lyrics menu (16 by default, a step up from the phone's 14). */
 @Composable

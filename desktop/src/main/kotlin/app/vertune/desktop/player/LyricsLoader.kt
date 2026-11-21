@@ -42,7 +42,7 @@ object LyricsLoader {
                 ?.map { it?.text }?.getOrNull()
             ?: KuGou.lyrics(artist = artist, title = title, duration = durationMs / 1000)?.map { it?.value }?.getOrNull()
 
-        Library.SavedLyrics(fixed.orEmpty(), synced.orEmpty(), saved?.word).also {
+        Library.SavedLyrics(fixed.orEmpty(), synced.orEmpty(), saved?.word, saved?.mode).also {
             runCatching {
                 Library.save(track)
                 Library.saveLyrics(track.id, it.fixed, it.synced)

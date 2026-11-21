@@ -69,6 +69,8 @@ object Library {
                 )
                 // Word-by-word lyrics, added later (same column the phone has).
                 if ("word" !in columns(st, "main", "Lyrics")) st.executeUpdate("ALTER TABLE Lyrics ADD COLUMN word TEXT")
+                // How each song's lyrics are shown (0 unsynced, 1 line-by-line, 2 word-by-word), like the phone.
+                if ("mode" !in columns(st, "main", "Lyrics")) st.executeUpdate("ALTER TABLE Lyrics ADD COLUMN mode INTEGER")
                 st.executeUpdate(
                     "CREATE TABLE IF NOT EXISTS SearchQuery (query TEXT PRIMARY KEY NOT NULL, at INTEGER NOT NULL)"
                 )
@@ -343,16 +345,30 @@ object Library {
     // ---- Lyrics (saved, like the phone, so they load instantly next time)
 
     /** [word]: word-by-word lyrics (YRC layout); null = not looked up yet, "" = none found. */
-    data class SavedLyrics(val fixed: String?, val synced: String?, val word: String? = null)
+    data class SavedLyrics(val fixed: String?, val synced: String?, val word: String? = null, val mode: Int? = null)
 
     @Synchronized
     fun lyrics(songId: String): SavedLyrics? =
-        connection.prepareStatement("SELECT fixed, synced, word FROM Lyrics WHERE songId = ?").use { st ->
+        connection.prepareStatement("SELECT fixed, synced, word, mode FROM Lyrics WHERE songId = ?").use { st ->
             st.setString(1, songId)
             st.executeQuery().use { rs ->
-                if (rs.next()) SavedLyrics(rs.getString(1), rs.getString(2), rs.getString(3)) else null
+                if (rs.next()) {
+                    val mode = rs.getInt(4).takeUnless { rs.wasNull() }
+                    SavedLyrics(rs.getString(1), rs.getString(2), rs.getString(3), mode)
+                } else null
             }
         }
+
+    @Synchronized
+    fun saveLyricsMode(songId: String, mode: Int) {
+        connection.prepareStatement(
+            "INSERT INTO Lyrics (songId, mode) VALUES (?, ?) ON CONFLICT(songId) DO UPDATE SET mode = excluded.mode"
+        ).use { st ->
+            st.setString(1, songId)
+            st.setInt(2, mode)
+            st.executeUpdate()
+        }
+    }
 
     @Synchronized
     fun saveWordLyrics(songId: String, word: String) {
@@ -630,7 +646,8 @@ object Library {
                     }
                 }
                 if (phoneHas("Lyrics")) runCatching {
-                    val cols = if ("word" in columns(st, "phone", "Lyrics")) "songId, fixed, synced, word" else "songId, fixed, synced"
+                    val phoneCols = columns(st, "phone", "Lyrics")
+                    val cols = (listOf("songId", "fixed", "synced") + listOf("word", "mode").filter { it in phoneCols }).joinToString(", ")
                     st.executeUpdate("INSERT OR IGNORE INTO Lyrics ($cols) SELECT $cols FROM phone.Lyrics")
                 }
                 if (phoneHas("SearchQuery")) runCatching {

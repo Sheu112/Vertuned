@@ -129,6 +129,14 @@
     <string name="invalid_synchronized_lyrics">Invalid synchronized lyrics, refetch or edit the lyrics and try again</string>
     <string name="show_unsynchronized_lyrics">Show unsynchronized lyrics</string>
     <string name="show_synchronized_lyrics">Show synchronized lyrics</string>
+    <string name="lyrics_mode_word">Word-by-word lyrics</string>
+    <string name="lyrics_mode_line">Line-by-line lyrics</string>
+    <string name="lyrics_mode_unsynced">Unsynchronized lyrics</string>
+    <string name="lyrics_text_size">Text size</string>
+    <string name="lyrics_size_small">Small</string>
+    <string name="lyrics_size_medium">Medium</string>
+    <string name="lyrics_size_large">Large</string>
+    <string name="lyrics_size_extra_large">Extra large</string>
     <string name="saving_lyrics">Saving lyrics for offline</string>
     <string name="show_word_by_word_lyrics">Show word-by-word lyrics</string>
     <string name="show_line_by_line_lyrics">Show line-by-line lyrics</string>

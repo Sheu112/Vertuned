@@ -1,8 +1,5 @@
 package app.vitune.android.ui.screens.player
 
-import android.app.SearchManager
-import android.content.ActivityNotFoundException
-import android.content.Intent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -62,12 +59,14 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import app.vitune.android.Database
 import app.vitune.android.LocalPlayerServiceBinder
 import app.vitune.android.R
 import app.vitune.android.models.Lyrics
+import app.vitune.android.models.LyricsMode
 import app.vitune.android.preferences.PlayerPreferences
 import app.vitune.android.query
 import app.vitune.android.service.LOCAL_KEY_PREFIX
@@ -121,6 +120,14 @@ import kotlin.time.Duration.Companion.seconds
 
 private const val UPDATE_DELAY = 50L
 
+/** Lyrics text sizes offered in the lyrics menu (14 is the original size). */
+private val LYRICS_SIZES = listOf(
+    R.string.lyrics_size_small to 14,
+    R.string.lyrics_size_medium to 16,
+    R.string.lyrics_size_large to 19,
+    R.string.lyrics_size_extra_large to 23
+)
+
 @Composable
 fun Lyrics(
     mediaId: String,
@@ -158,7 +165,19 @@ fun Lyrics(
     val pip = isInPip()
 
     var lyrics by remember { mutableStateOf<Lyrics?>(null) }
-    val wordByWord = PlayerPreferences.isShowingWordByWordLyrics
+    // Each song remembers word-by-word, line-by-line or unsynchronized (word-by-word until changed).
+    // A song with no timed lyrics at all falls back to unsynchronized unless that was picked on purpose.
+    val chosenMode = lyrics?.mode
+    val lyricsMode = chosenMode ?: LyricsMode.WORD
+    val hasTimedLyrics = lyrics == null || lyrics?.synced?.isNotBlank() == true || lyrics?.word != ""
+    @Suppress("NAME_SHADOWING")
+    val shouldShowSynchronizedLyrics = lyricsMode != LyricsMode.UNSYNCED && (chosenMode != null || hasTimedLyrics)
+    val wordByWord = lyricsMode == LyricsMode.WORD
+    val setMode: (Int) -> Unit = { newMode ->
+        lyrics?.let { current -> query { Database.upsert(current.copy(mode = newMode)) } }
+    }
+    val lyricsSize = PlayerPreferences.lyricsTextSize
+    val lyricsStyle = typography.xs.copy(fontSize = lyricsSize.sp).center.medium
     val wordLyrics = remember(lyrics?.word, wordByWord) {
         if (wordByWord) WordLyrics.parseYrc(lyrics?.word) else null
     }
@@ -251,7 +270,8 @@ fun Lyrics(
                                 fixed = fixed.orEmpty(),
                                 synced = synced.orEmpty(),
                                 startTime = currentLyrics?.startTime,
-                                word = currentLyrics?.word
+                                word = currentLyrics?.word,
+                                mode = currentLyrics?.mode
                             ).also {
                                 this@withContext.ensureActive()
 
@@ -328,13 +348,15 @@ fun Lyrics(
                             synced = it,
                             startTime = lyrics?.startTime,
                             // Your own edit wins over word-by-word lyrics found online
-                            word = ""
+                            word = "",
+                            mode = lyrics?.mode
                         ) else Lyrics(
                             songId = mediaId,
                             fixed = it,
                             synced = lyrics?.synced,
                             startTime = lyrics?.startTime,
-                            word = lyrics?.word
+                            word = lyrics?.word,
+                            mode = lyrics?.mode
                         )
                     )
                 }
@@ -367,7 +389,8 @@ fun Lyrics(
                                 fixed = lyrics?.fixed,
                                 synced = it.syncedLyrics,
                                 // A hand-picked LrcLib track wins over word-by-word lyrics
-                                word = ""
+                                word = "",
+                                mode = lyrics?.mode
                             )
                         )
                     }
@@ -516,7 +539,7 @@ fun Lyrics(
                         if (wordLine != null && index == synchronizedLyrics.index) WordByWordLine(
                             line = wordLine,
                             position = { wordPosition },
-                            style = typography.xs.center.medium,
+                            style = lyricsStyle,
                             sungColor = Color.White,
                             unsungColor = colorPalette.textDisabled,
                             modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
@@ -526,10 +549,10 @@ fun Lyrics(
                             colorFilter = ColorFilter.tint(color),
                             modifier = Modifier
                                 .padding(vertical = 4.dp, horizontal = 32.dp)
-                                .size(typography.xs.fontSize.dp)
+                                .size(lyricsSize.dp)
                         ) else BasicText(
                             text = sentence,
-                            style = typography.xs.center.medium.color(color),
+                            style = lyricsStyle.color(color),
                             modifier = Modifier.padding(vertical = 4.dp, horizontal = 32.dp)
                         )
                     }
@@ -539,7 +562,7 @@ fun Lyrics(
                 }
             } else BasicText(
                 text = lyrics?.fixed.orEmpty(),
-                style = typography.xs.center.medium.color(colorPalette.onOverlay),
+                style = lyricsStyle.color(colorPalette.onOverlay),
                 modifier = Modifier
                     .verticalFadingEdge()
                     .verticalScroll(rememberScrollState())
@@ -592,31 +615,54 @@ fun Lyrics(
                             onMenuLaunch()
                             menuState.display {
                                 Menu {
-                                    MenuEntry(
-                                        icon = R.drawable.time,
-                                        text = stringResource(
-                                            if (shouldShowSynchronizedLyrics) R.string.show_unsynchronized_lyrics
-                                            else R.string.show_synchronized_lyrics
-                                        ),
-                                        secondaryText = if (shouldShowSynchronizedLyrics) null
-                                        else stringResource(R.string.provided_lyrics_by),
-                                        onClick = {
-                                            menuState.hide()
-                                            setShouldShowSynchronizedLyrics(!shouldShowSynchronizedLyrics)
+                                    // This song's lyrics mode, with a check next to the current one
+                                    listOf(
+                                        Triple(LyricsMode.WORD, R.string.lyrics_mode_word, R.drawable.text),
+                                        Triple(LyricsMode.LINE, R.string.lyrics_mode_line, R.drawable.time),
+                                        Triple(LyricsMode.UNSYNCED, R.string.lyrics_mode_unsynced, R.drawable.musical_notes)
+                                    ).forEach { (entryMode, label, icon) ->
+                                        val current = when {
+                                            !shouldShowSynchronizedLyrics -> LyricsMode.UNSYNCED
+                                            wordByWord -> LyricsMode.WORD
+                                            else -> LyricsMode.LINE
                                         }
-                                    )
+                                        MenuEntry(
+                                            icon = icon,
+                                            text = stringResource(label),
+                                            onClick = {
+                                                menuState.hide()
+                                                setMode(entryMode)
+                                            },
+                                            trailingContent = if (entryMode == current) {
+                                                {
+                                                    BasicText(
+                                                        text = "✓",
+                                                        style = typography.s.semiBold.color(colorPalette.accent)
+                                                    )
+                                                }
+                                            } else null
+                                        )
+                                    }
 
-                                    if (shouldShowSynchronizedLyrics) MenuEntry(
+                                    MenuEntry(
                                         icon = R.drawable.text,
-                                        text = stringResource(
-                                            if (wordByWord) R.string.show_line_by_line_lyrics
-                                            else R.string.show_word_by_word_lyrics
-                                        ),
-                                        secondaryText = if (wordByWord) null
-                                        else stringResource(R.string.word_by_word_lyrics_description),
+                                        text = stringResource(R.string.lyrics_text_size),
                                         onClick = {
-                                            menuState.hide()
-                                            PlayerPreferences.isShowingWordByWordLyrics = !wordByWord
+                                            menuState.display {
+                                                Menu {
+                                                    LYRICS_SIZES.forEach { (label, size) ->
+                                                        MenuEntry(
+                                                            icon = R.drawable.text,
+                                                            text = (if (size == lyricsSize) "✓ " else "") +
+                                                                stringResource(label),
+                                                            onClick = {
+                                                                menuState.hide()
+                                                                PlayerPreferences.lyricsTextSize = size
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                     )
 
@@ -626,29 +672,6 @@ fun Lyrics(
                                         onClick = {
                                             menuState.hide()
                                             editing = true
-                                        }
-                                    )
-
-                                    val errorMsg = stringResource(R.string.no_browser_installed)
-                                    MenuEntry(
-                                        icon = R.drawable.search,
-                                        text = stringResource(R.string.search_lyrics_online),
-                                        onClick = {
-                                            menuState.hide()
-                                            val mediaMetadata = currentMediaMetadataProvider()
-
-                                            try {
-                                                context.startActivity(
-                                                    Intent(Intent.ACTION_WEB_SEARCH).apply {
-                                                        putExtra(
-                                                            SearchManager.QUERY,
-                                                            "${mediaMetadata.title} ${mediaMetadata.artist} lyrics"
-                                                        )
-                                                    }
-                                                )
-                                            } catch (_: ActivityNotFoundException) {
-                                                context.toast(errorMsg)
-                                            }
                                         }
                                     )
 
@@ -668,13 +691,15 @@ fun Lyrics(
                                                             songId = mediaId,
                                                             fixed = lyrics?.fixed,
                                                             synced = null,
-                                                            word = null
+                                                            word = null,
+                                                            mode = lyrics?.mode
                                                         ) else Lyrics(
                                                             songId = mediaId,
                                                             fixed = null,
                                                             synced = lyrics?.synced,
                                                             startTime = lyrics?.startTime,
-                                                            word = lyrics?.word
+                                                            word = lyrics?.word,
+                                                            mode = lyrics?.mode
                                                         )
                                                     )
                                                 }
